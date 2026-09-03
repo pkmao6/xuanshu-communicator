@@ -1,0 +1,11 @@
+{
+    "display_name": "玄枢通讯器",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "雪莉 · 为主人定制",
+    "version": "1.0.0",
+    "homePage": ""
+}

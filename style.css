@@ -1,0 +1,365 @@
+/* ============ 玄枢通讯器 · 绿磷光终端 ============ */
+
+/* ---- 悬浮启动按钮 ---- */
+.xuanshu-launcher {
+    position: fixed;
+    right: 14px;
+    bottom: 26%;
+    z-index: 30001;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at 35% 30%, #0d2b0d, #041404 70%);
+    border: 1px solid rgba(74, 246, 38, 0.55);
+    box-shadow: 0 0 12px rgba(74, 246, 38, 0.45), inset 0 0 10px rgba(74, 246, 38, 0.15);
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.xuanshu-launcher:hover {
+    transform: scale(1.08);
+    box-shadow: 0 0 22px rgba(74, 246, 38, 0.75), inset 0 0 14px rgba(74, 246, 38, 0.25);
+}
+.xuanshu-launcher-icon {
+    color: #4af626;
+    font-size: 20px;
+    text-shadow: 0 0 8px rgba(74, 246, 38, 0.9);
+    animation: xuanshu-pulse 2.4s ease-in-out infinite;
+}
+.xuanshu-launcher-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #ff4d6d;
+    box-shadow: 0 0 8px rgba(255, 77, 109, 0.9);
+    animation: xuanshu-pulse 1s ease-in-out infinite;
+}
+
+/* ---- 终端本体 ---- */
+.xuanshu-root {
+    position: fixed;
+    right: 24px;
+    bottom: 84px;
+    z-index: 30000;
+    width: 400px;
+    max-width: 92vw;
+    flex-direction: column;
+    font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+    user-select: none;
+}
+.xuanshu-bezel {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    border-radius: 18px;
+    background: linear-gradient(145deg, #1a2a1a, #0a140a 60%, #162216);
+    border: 1px solid #2c4a2c;
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.65), 0 0 18px rgba(74, 246, 38, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* ---- 顶栏 ---- */
+.xuanshu-topbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px 2px;
+    cursor: grab;
+    color: #9dff8a;
+    font-size: 13px;
+    letter-spacing: 1px;
+}
+.xuanshu-topbar:active { cursor: grabbing; }
+.xuanshu-led {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4af626;
+    box-shadow: 0 0 8px #4af626;
+    animation: xuanshu-blink 2.6s steps(2, start) infinite;
+}
+.xuanshu-title {
+    font-weight: bold;
+    text-shadow: 0 0 6px rgba(74, 246, 38, 0.8);
+}
+.xuanshu-sig {
+    margin-left: auto;
+    font-size: 10px;
+    color: #57c93e;
+    opacity: 0.85;
+}
+.xuanshu-batt {
+    font-size: 10px;
+    color: #9dff8a;
+    opacity: 0.9;
+}
+.xuanshu-btn {
+    width: 22px;
+    height: 22px;
+    line-height: 1;
+    border-radius: 5px;
+    border: 1px solid rgba(74, 246, 38, 0.4);
+    background: rgba(4, 20, 4, 0.9);
+    color: #9dff8a;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.xuanshu-btn:hover {
+    background: rgba(74, 246, 38, 0.18);
+    box-shadow: 0 0 8px rgba(74, 246, 38, 0.4);
+}
+
+/* ---- 屏幕 ---- */
+.xuanshu-screen {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    height: 400px;
+    padding: 10px;
+    border-radius: 10px;
+    background: radial-gradient(ellipse at 50% 30%, rgba(6, 30, 6, 0.9), #020a02 75%);
+    border: 1px solid rgba(74, 246, 38, 0.28);
+    box-shadow: inset 0 0 26px rgba(0, 0, 0, 0.85), inset 0 0 60px rgba(74, 246, 38, 0.06);
+    overflow: hidden;
+}
+.xuanshu-scan {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.18) 0px,
+        rgba(0, 0, 0, 0.18) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+    mix-blend-mode: multiply;
+    z-index: 5;
+}
+.xuanshu-screen::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(rgba(74, 246, 38, 0.05), transparent 12%);
+    animation: xuanshu-flicker 4s infinite;
+    z-index: 6;
+}
+.xuanshu-glow .xuanshu-screen {
+    box-shadow: inset 0 0 26px rgba(0, 0, 0, 0.85), 0 0 26px rgba(74, 246, 38, 0.5);
+}
+.xuanshu-minimized .xuanshu-screen,
+.xuanshu-minimized .xuanshu-settings-pop {
+    display: none !important;
+}
+
+/* ---- 标签页 ---- */
+.xuanshu-tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    position: relative;
+    z-index: 7;
+    padding-bottom: 4px;
+    border-bottom: 1px dashed rgba(74, 246, 38, 0.35);
+}
+.xuanshu-flex { flex: 1; }
+.xuanshu-tab {
+    border: 1px solid transparent;
+    background: transparent;
+    color: #57c93e;
+    font-family: inherit;
+    font-size: 12px;
+    letter-spacing: 1px;
+    padding: 3px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+    opacity: 0.7;
+}
+.xuanshu-tab:hover { opacity: 1; }
+.xuanshu-tab.active {
+    opacity: 1;
+    color: #0a140a;
+    background: #4af626;
+    text-shadow: none;
+    box-shadow: 0 0 10px rgba(74, 246, 38, 0.8);
+    font-weight: bold;
+}
+.xuanshu-clear {
+    border: 1px solid rgba(255, 77, 109, 0.4);
+    background: transparent;
+    color: #ff8fa5;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 3px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+.xuanshu-clear:hover {
+    background: rgba(255, 77, 109, 0.15);
+    box-shadow: 0 0 8px rgba(255, 77, 109, 0.4);
+}
+
+/* ---- 消息区 ---- */
+.xuanshu-log {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    position: relative;
+    z-index: 7;
+    padding: 4px 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.xuanshu-log::-webkit-scrollbar { width: 6px; }
+.xuanshu-log::-webkit-scrollbar-track { background: rgba(74, 246, 38, 0.05); }
+.xuanshu-log::-webkit-scrollbar-thumb { background: rgba(74, 246, 38, 0.35); border-radius: 3px; }
+.xuanshu-line {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 13px;
+    line-height: 1.5;
+}
+.xuanshu-meta {
+    color: #2f7a22;
+    font-size: 10px;
+    flex-shrink: 0;
+}
+.xuanshu-who {
+    flex-shrink: 0;
+    color: #ffd166;
+    text-shadow: 0 0 5px rgba(255, 209, 102, 0.7);
+}
+.xuanshu-line.yin .xuanshu-who {
+    color: #ff8ac2;
+    text-shadow: 0 0 5px rgba(255, 138, 194, 0.7);
+}
+.xuanshu-line.sys .xuanshu-who { color: #8a9a8a; text-shadow: none; }
+.xuanshu-text {
+    color: #4af626;
+    text-shadow: 0 0 5px rgba(74, 246, 38, 0.6);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.xuanshu-line.sys .xuanshu-text { color: #7fae7f; text-shadow: none; }
+
+/* ---- 输入行 ---- */
+.xuanshu-inputrow {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    position: relative;
+    z-index: 7;
+    padding-top: 6px;
+    border-top: 1px dashed rgba(74, 246, 38, 0.35);
+}
+.xuanshu-prompt {
+    color: #4af626;
+    text-shadow: 0 0 6px rgba(74, 246, 38, 0.9);
+    font-weight: bold;
+}
+#xuanshu-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #4af626;
+    caret-color: #4af626;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.4;
+    resize: none;
+    max-height: 96px;
+    padding: 2px 0;
+}
+#xuanshu-input::placeholder { color: #2f7a22; }
+.xuanshu-send {
+    border: 1px solid rgba(74, 246, 38, 0.5);
+    background: rgba(74, 246, 38, 0.12);
+    color: #4af626;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+    letter-spacing: 2px;
+    text-shadow: 0 0 5px rgba(74, 246, 38, 0.7);
+}
+.xuanshu-send:hover { background: rgba(74, 246, 38, 0.25); box-shadow: 0 0 10px rgba(74, 246, 38, 0.5); }
+.xuanshu-send:disabled { opacity: 0.45; cursor: wait; }
+
+/* ---- 设置面板 ---- */
+.xuanshu-settings-pop {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border-radius: 10px;
+    background: rgba(2, 10, 2, 0.97);
+    border: 1px solid rgba(74, 246, 38, 0.3);
+    box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.8);
+    max-height: 280px;
+    overflow-y: auto;
+}
+.xuanshu-set-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #9dff8a;
+}
+.xuanshu-set-row label { flex-shrink: 0; min-width: 96px; }
+.xuanshu-set-row input[type='text'],
+.xuanshu-set-row input[type='number'],
+.xuanshu-set-row textarea {
+    flex: 1;
+    background: rgba(74, 246, 38, 0.06);
+    border: 1px solid rgba(74, 246, 38, 0.3);
+    border-radius: 4px;
+    color: #4af626;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 4px 6px;
+    outline: none;
+}
+.xuanshu-set-row input:focus,
+.xuanshu-set-row textarea:focus {
+    border-color: #4af626;
+    box-shadow: 0 0 8px rgba(74, 246, 38, 0.4);
+}
+.xuanshu-set-check label { min-width: auto; cursor: pointer; }
+.xuanshu-set-note { color: #2f7a22; font-size: 10px; letter-spacing: 1px; }
+
+/* ---- 动画 ---- */
+@keyframes xuanshu-blink {
+    0%, 55% { opacity: 1; }
+    56%, 100% { opacity: 0.35; }
+}
+@keyframes xuanshu-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+}
+@keyframes xuanshu-flicker {
+    0%, 100% { opacity: 0.5; }
+    3% { opacity: 0.2; }
+    6% { opacity: 0.6; }
+    9% { opacity: 0.3; }
+    12% { opacity: 0.55; }
+    60% { opacity: 0.4; }
+    63% { opacity: 0.55; }
+}
+.xuanshu-blink { animation: xuanshu-pulse 0.8s ease-in-out infinite; }
