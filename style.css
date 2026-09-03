@@ -350,6 +350,96 @@
 .xuanshu-set-check label { min-width: auto; cursor: pointer; }
 .xuanshu-set-note { color: #2f7a22; font-size: 10px; letter-spacing: 1px; }
 
+
+/* ---- 通讯对象选择行 ---- */
+.xuanshu-targetrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+    z-index: 7;
+    padding-bottom: 4px;
+}
+.xuanshu-target-label {
+    color: #2f7a22;
+    font-size: 11px;
+    letter-spacing: 1px;
+    flex-shrink: 0;
+}
+#xuanshu-target {
+    flex: 1;
+    background: rgba(74, 246, 38, 0.06);
+    border: 1px solid rgba(74, 246, 38, 0.3);
+    border-radius: 4px;
+    color: #4af626;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 3px 6px;
+    outline: none;
+    cursor: pointer;
+}
+#xuanshu-target:disabled { opacity: 0.5; cursor: not-allowed; }
+#xuanshu-target option { background: #020a02; color: #4af626; }
+
+/* ---- 设置面板标题与通讯录 ---- */
+.xuanshu-set-title {
+    color: #9dff8a;
+    font-size: 12px;
+    letter-spacing: 2px;
+    text-shadow: 0 0 5px rgba(74, 246, 38, 0.7);
+    border-bottom: 1px dashed rgba(74, 246, 38, 0.35);
+    padding-bottom: 3px;
+}
+#xuanshu-invite-select {
+    flex: 1;
+    background: rgba(74, 246, 38, 0.06);
+    border: 1px solid rgba(74, 246, 38, 0.3);
+    border-radius: 4px;
+    color: #4af626;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 4px 6px;
+    outline: none;
+}
+#xuanshu-invite-select option { background: #020a02; color: #4af626; }
+.xuanshu-invite-btn {
+    flex: 1;
+    border: 1px solid rgba(74, 246, 38, 0.5);
+    background: rgba(74, 246, 38, 0.12);
+    color: #4af626;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    letter-spacing: 2px;
+    text-shadow: 0 0 5px rgba(74, 246, 38, 0.7);
+}
+.xuanshu-invite-btn:hover { background: rgba(74, 246, 38, 0.25); box-shadow: 0 0 10px rgba(74, 246, 38, 0.5); }
+.xuanshu-member-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #9dff8a;
+    padding: 3px 0;
+    border-bottom: 1px dotted rgba(74, 246, 38, 0.18);
+}
+.xuanshu-member-name { flex: 1; color: #4af626; text-shadow: 0 0 5px rgba(74, 246, 38, 0.5); }
+.xuanshu-member-hb { flex-shrink: 0; color: #57c93e; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.xuanshu-member-kick {
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 77, 109, 0.4);
+    background: transparent;
+    color: #ff8fa5;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 2px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+.xuanshu-member-kick:hover { background: rgba(255, 77, 109, 0.15); box-shadow: 0 0 8px rgba(255, 77, 109, 0.4); }
+
 /* ---- 动画 ---- */
 @keyframes xuanshu-blink {
     0%, 55% { opacity: 1; }
