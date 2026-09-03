@@ -2,6 +2,8 @@
 
 为 SillyTavern 制作的加密通讯终端插件 —— 叶玄与淫宠之间的秘密频道，剧情里嵌入，剧情外异步私聊。
 
+> 仓库地址：https://github.com/pkmao6/xuanshu-communicator
+
 ## 功能
 
 - **实时频道（剧情嵌入）**：在终端输入讯息，会以「玄枢」的身份、终端样式的消息块投递进主线聊天流，跟着剧情走；淫宠的回复由 AI 静默生成后同样投递进主线，不打断剧情节奏。
@@ -42,6 +44,15 @@
 
 ## 安装
 
+### 方式一：扩展面板一键安装（推荐）
+
+1. SillyTavern 右上角点开「扩展」面板
+2. 点击「安装扩展 / Install extension」
+3. 粘贴仓库地址：`https://github.com/pkmao6/xuanshu-communicator`
+4. 点击安装，刷新页面后即可使用
+
+### 方式二：手动安装
+
 将整个 `xuanshu` 文件夹放入：
 
 ```
@@ -49,3 +60,5 @@ public/scripts/extensions/third-party/xuanshu/
 ```
 
 然后重启 SillyTavern（或刷新页面）即可，在「扩展」面板里可以看到「玄枢通讯器」。
+
+> 注意：不要同时保留「手动安装」和「面板安装」的两份拷贝，会开出两台终端哦。
