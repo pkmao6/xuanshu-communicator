@@ -54,6 +54,7 @@
     user-select: none;
 }
 .xuanshu-bezel {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -126,7 +127,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    height: 400px;
+    height: min(400px, calc(100vh - 190px));
     padding: 10px;
     border-radius: 10px;
     background: radial-gradient(ellipse at 50% 30%, rgba(6, 30, 6, 0.9), #020a02 75%);
@@ -302,17 +303,22 @@
 .xuanshu-send:hover { background: rgba(74, 246, 38, 0.25); box-shadow: 0 0 10px rgba(74, 246, 38, 0.5); }
 .xuanshu-send:disabled { opacity: 0.45; cursor: wait; }
 
-/* ---- 设置面板 ---- */
+/* ---- 设置面板（悬浮覆盖层，不改变窗口高度） ---- */
 .xuanshu-settings-pop {
+    position: absolute;
+    top: 42px;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    z-index: 20;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 10px;
+    padding: 12px;
     border-radius: 10px;
     background: rgba(2, 10, 2, 0.97);
     border: 1px solid rgba(74, 246, 38, 0.3);
-    box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.8);
-    max-height: 280px;
+    box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.8), 0 4px 18px rgba(0, 0, 0, 0.6);
     overflow-y: auto;
 }
 .xuanshu-set-row {

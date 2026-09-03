@@ -1,5 +1,6 @@
 import { extension_settings } from '../../../extensions.js';
-import { saveSettingsDebounced, eventSource, event_types, generateQuietPrompt, generateRaw, getContext, characters } from '../../../../script.js';
+import { saveSettingsDebounced, eventSource, event_types, generateQuietPrompt, generateRaw, characters } from '../../../../script.js';
+import { getContext } from '../../../st-context.js';
 import { registerSlashCommand, sendMessageAs } from '../../../slash-commands.js';
 import { findChar } from '../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
@@ -316,12 +317,27 @@ function refreshChatStyle() {
 `;
 }
 
+function clampPosition() {
+    if (!$root) return;
+    const rect = $root[0].getBoundingClientRect();
+    const maxX = Math.max(0, window.innerWidth - 80);
+    const maxY = Math.max(0, window.innerHeight - 48);
+    if (rect.top < 8 || rect.left < 8 || rect.right > window.innerWidth || rect.bottom > window.innerHeight) {
+        const x = Math.min(Math.max(0, rect.left), maxX);
+        const y = Math.min(Math.max(0, rect.top), maxY);
+        $root.css({ left: x + 'px', top: y + 'px', right: 'auto', bottom: 'auto' });
+        settings.ui.x = x;
+        settings.ui.y = y;
+    }
+}
+
 function openDevice(save = true) {
     if (!$root) return;
     $root.css('display', 'flex');
     if (settings.ui.x != null) {
         $root.css({ left: settings.ui.x + 'px', top: settings.ui.y + 'px', right: 'auto', bottom: 'auto' });
     }
+    clampPosition();
     $root.toggleClass('xuanshu-minimized', !!settings.ui.minimized);
     $('#xuanshu-launcher').hide();
     $('#xuanshu-launcher-badge').hide();
@@ -375,6 +391,7 @@ function bindEvents() {
         saveSettingsDebounced();
         renderLog();
     });
+    $('#xuanshu-input').on('input', function () { autoGrow(this); });
     $('#xuanshu-input').on('keydown', function (e) {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -412,10 +429,8 @@ function makeDraggable() {
         const offX = e.clientX - rect.left;
         const offY = e.clientY - rect.top;
         const move = (ev) => {
-            const w = $root[0].offsetWidth;
-            const h = $root[0].offsetHeight;
-            const x = Math.min(Math.max(0, ev.clientX - offX), window.innerWidth - 70);
-            const y = Math.min(Math.max(0, ev.clientY - offY), window.innerHeight - 40);
+            const x = Math.min(Math.max(0, ev.clientX - offX), window.innerWidth - 80);
+            const y = Math.min(Math.max(0, ev.clientY - offY), window.innerHeight - 48);
             $root.css({ left: x + 'px', top: y + 'px', right: 'auto', bottom: 'auto' });
         };
         const up = () => {
@@ -476,6 +491,10 @@ async function commCallback(args, value) {
         }
         if (sub) {
             await sendLive(text ? `${sub} ${text}` : sub);
+            return '';
+        }
+        if (text) {
+            await sendLive(text);
             return '';
         }
         toastr.info(`${settings.deviceName}：/comm 消息 | /comm side 消息 | /comm reply | /comm open | /comm close`);
