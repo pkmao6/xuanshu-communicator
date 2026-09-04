@@ -516,6 +516,151 @@
 }
 #xuanshu-set-hubmode option { background: #020a02; color: #4af626; }
 
+
+/* ---- v1.3：图库与灯箱 ---- */
+.xuanshu-gal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.xuanshu-gal-head .xuanshu-set-title { flex: 1; border-bottom: none; padding-bottom: 0; }
+#xuanshu-gal-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 8px;
+}
+.xuanshu-gal-item {
+    position: relative;
+    aspect-ratio: 1;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid rgba(74, 246, 38, 0.3);
+    cursor: pointer;
+    background: rgba(74, 246, 38, 0.05);
+}
+.xuanshu-gal-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.xuanshu-gal-item.is-portrait { border-color: #ffd166; box-shadow: 0 0 10px rgba(255, 209, 102, 0.5); }
+.xuanshu-gal-badge {
+    position: absolute;
+    left: 4px;
+    top: 4px;
+    background: rgba(255, 209, 102, 0.92);
+    color: #1a1400;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+.xuanshu-gal-actions {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.xuanshu-gal-item:hover .xuanshu-gal-actions { opacity: 1; }
+.xuanshu-gal-actions span {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.65);
+    color: #fff;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.xuanshu-gal-actions span:hover { background: rgba(0, 0, 0, 0.9); }
+
+/* ---- 灯箱（照搬色色灵感交互：三槽滑动 + 点图/空白/ESC 关闭 + 左右翻页） ---- */
+#xuanshu-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 40000;
+    background: rgba(0, 0, 0, 0.88);
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    cursor: pointer;
+    overflow: hidden;
+}
+.xuanshu-lb-track {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    width: 100%;
+    transition: transform 0.24s cubic-bezier(0.25, 0.72, 0.36, 1);
+}
+.xuanshu-lb-slide {
+    flex: 0 0 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+.xuanshu-lb-slide img {
+    max-width: 90vw;
+    max-height: 88vh;
+    object-fit: contain;
+    border-radius: 8px;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.7);
+    user-select: none;
+    -webkit-user-drag: none;
+}
+.xuanshu-lb-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 44px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 34px;
+    color: #4af626;
+    text-shadow: 0 0 8px rgba(74, 246, 38, 0.8);
+    cursor: pointer;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 8px;
+}
+.xuanshu-lb-prev { left: 12px; }
+.xuanshu-lb-next { right: 12px; }
+.xuanshu-lb-counter {
+    position: absolute;
+    bottom: 66px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #9dff8a;
+    font-size: 13px;
+    z-index: 5;
+    font-family: inherit;
+    text-shadow: 0 0 6px rgba(74, 246, 38, 0.8);
+}
+.xuanshu-lb-actions {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    z-index: 5;
+}
+.xuanshu-lb-actions button {
+    border: 1px solid rgba(74, 246, 38, 0.5);
+    background: rgba(2, 10, 2, 0.85);
+    color: #9dff8a;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+.xuanshu-lb-actions button:hover { background: rgba(74, 246, 38, 0.2); }
+.xuanshu-lb-star.on { color: #ffd166; border-color: #ffd166; }
+
 /* ---- 动画 ---- */
 @keyframes xuanshu-blink {
     0%, 55% { opacity: 1; }
