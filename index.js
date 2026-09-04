@@ -526,6 +526,42 @@ function sanitizeWorkflow(wf) {
     return wf;
 }
 
+/* ---------------- ComfyUI 辅助：执行结果解析 ---------------- */
+
+function extractComfyError(entry) {
+    const messages = entry?.status?.messages;
+    if (Array.isArray(messages)) {
+        for (const m of messages) {
+            if (m?.type === 'execution_error' && m?.message) {
+                const mm = m.message;
+                return (mm?.message ?? mm?.exception_type ?? JSON.stringify(mm)).slice(0, 600);
+            }
+        }
+        for (const m of messages) {
+            if (m?.type === 'execution_interrupted' || m?.type === 'execution_cached') {
+                return String(m?.message ?? m?.type).slice(0, 300);
+            }
+        }
+    }
+    return '未知执行错误（status=' + (entry?.status?.status_str ?? '?') + '）';
+}
+
+function collectOutputImages(outputs) {
+    if (!outputs || typeof outputs !== 'object') return [];
+    const all = [];
+    for (const oid of Object.keys(outputs)) {
+        const imgs = outputs[oid]?.images;
+        if (Array.isArray(imgs)) {
+            for (const img of imgs) {
+                if (img && img.filename) all.push({ ...img, nodeId: oid });
+            }
+        }
+    }
+    // 优先正式出图（SaveImage 类），其次预览图
+    const formal = all.filter((x) => x.type !== 'temp');
+    return formal.length ? formal : all;
+}
+
 /* ---------------- ComfyUI 辅助：错误透传 + 模型自动校准 ---------------- */
 
 async function comfyErrorDetail(resp) {
@@ -735,7 +771,7 @@ function buildComfyWorkflow(prompt, negative, size = null) {
     return sanitizeWorkflow(replace(json));
 }
 
-async function generateImage(name, prompt, negative, size = null) {
+async function generateImage(name, prompt, negative, size = null, onProgress = null) {
     const c = settings.comfy;
     const base = String(c.baseUrl || '').replace(/\/+$/, '');
     if (!base) throw new Error('请先在设置里填写 ComfyUI 地址');
@@ -758,26 +794,42 @@ async function generateImage(name, prompt, negative, size = null) {
     const data = await resp.json();
     const promptId = data?.prompt_id;
     if (!promptId) throw new Error('ComfyUI 未返回 prompt_id：' + JSON.stringify(data).slice(0, 200));
-    for (let i = 0; i < 100; i++) {
-        await sleep(3000);
-        let hist;
+    const startedAt = Date.now();
+    const POLL_MS = 3000;
+    const MAX_WAIT_MS = 30 * 60 * 1000; // 30 分钟上限（重工作流在云端可能跑很久）
+    let ticks = 0;
+    for (;;) {
+        const elapsed = Date.now() - startedAt;
+        let hist = null;
         try {
             const hr = await fetch(base + '/history/' + promptId, { signal: AbortSignal.timeout(15000) });
-            if (!hr.ok) continue;
-            hist = await hr.json();
-        } catch { continue; }
-        const outputs = hist?.[promptId]?.outputs ?? {};
-        const images = Object.values(outputs).flatMap((o) => Array.isArray(o?.images) ? o.images : []);
-        if (images.length) {
-            const img = images[0];
-            const qs = new URLSearchParams({ filename: img.filename, subfolder: img.subfolder || '', type: img.type || 'output' });
-            const ir = await fetch(base + '/view?' + qs.toString(), { signal: AbortSignal.timeout(60000) });
-            if (!ir.ok) throw new Error('立绘下载失败：' + ir.status);
-            const blob = await ir.blob();
-            return await blobToDataUrl(blob);
+            if (hr.ok) hist = await hr.json();
+        } catch { hist = null; }
+        const entry = hist?.[promptId];
+        if (entry) {
+            const statusStr = entry?.status?.status_str;
+            if (statusStr === 'error' || statusStr === 'error_early') {
+                throw new Error('ComfyUI 执行出错：' + extractComfyError(entry));
+            }
+            const images = collectOutputImages(entry?.outputs);
+            if (images.length) {
+                const img = images[0];
+                const qs = new URLSearchParams({ filename: img.filename, subfolder: img.subfolder || '', type: img.type || 'output' });
+                const ir = await fetch(base + '/view?' + qs.toString(), { signal: AbortSignal.timeout(120000) });
+                if (!ir.ok) throw new Error('立绘下载失败（' + ir.status + '）：' + img.filename);
+                const blob = await ir.blob();
+                return await blobToDataUrl(blob);
+            }
         }
+        if (elapsed >= MAX_WAIT_MS) {
+            throw new Error('ComfyUI 生成超时（已等待 30 分钟仍未出图）。工作流可能执行失败或在排队，请留意 ComfyUI 界面。');
+        }
+        if (ticks % 5 === 0 && typeof onProgress === 'function') {
+            onProgress(Math.round(elapsed / 1000));
+        }
+        ticks += 1;
+        await sleep(POLL_MS);
     }
-    throw new Error('ComfyUI 生成超时（超过 5 分钟未出图）');
 }
 
 /* ---------------- 成员管理 ---------------- */
@@ -1168,7 +1220,11 @@ async function runGen() {
     const status = $('#xuanshu-gen-status');
     status.text('▌正在生成……（约 10 秒到数分钟，请保持页面开启）');
     try {
-        const dataUrl = await generateImage(galleryMember, prompt, negative, size);
+        const startedAt = Date.now();
+        const dataUrl = await generateImage(galleryMember, prompt, negative, size, (sec) => {
+            status.text('▌正在生成…… 已等待约 ' + sec + ' 秒（最久 30 分钟），请保持页面开启');
+        });
+        void startedAt;
         const entry = addGalleryImage(galleryMember, { dataUrl, prompt, negative });
         saveDraft(galleryMember, prompt, negative);
         renderGallery();
