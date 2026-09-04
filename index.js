@@ -473,6 +473,59 @@ async function aiChat(messages) {
     return String(reply ?? '').trim();
 }
 
+/* ---------------- ComfyUI 辅助：工作流清理 ---------------- */
+
+function sanitizeWorkflow(wf) {
+    if (!wf || typeof wf !== 'object') return wf;
+    const isComparer = (node) => {
+        if (!node || typeof node !== 'object') return false;
+        return String(node.class_type ?? '').includes('Image Comparer');
+    };
+    const computeReferenced = () => {
+        const referenced = new Set();
+        const scanRefs = (v) => {
+            if (Array.isArray(v)) {
+                if (v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'number') {
+                    referenced.add(v[0]);
+                    return;
+                }
+                v.forEach(scanRefs);
+                return;
+            }
+            if (v && typeof v === 'object') {
+                for (const k of Object.keys(v)) scanRefs(v[k]);
+            }
+        };
+        for (const nid of Object.keys(wf)) scanRefs(wf[nid]);
+        return referenced;
+    };
+    // 循环剪枝：剪掉不再被任何节点引用的「图像对比」展示节点（它们带 UI 临时图片引用，API 提交必炸）
+    let changed = true;
+    while (changed) {
+        changed = false;
+        const referenced = computeReferenced();
+        for (const nid of Object.keys(wf)) {
+            if (referenced.has(nid)) continue;
+            if (isComparer(wf[nid])) {
+                delete wf[nid];
+                changed = true;
+            }
+        }
+    }
+    // 残留的 rgthree_comparer 配置键清掉（UI 专用）
+    const strip = (v) => {
+        if (Array.isArray(v)) { v.forEach(strip); return; }
+        if (v && typeof v === 'object') {
+            for (const k of Object.keys(v)) {
+                if (k === 'rgthree_comparer') delete v[k];
+                else strip(v[k]);
+            }
+        }
+    };
+    strip(wf);
+    return wf;
+}
+
 /* ---------------- ComfyUI 辅助：错误透传 + 模型自动校准 ---------------- */
 
 async function comfyErrorDetail(resp) {
@@ -650,12 +703,18 @@ function buildComfyWorkflow(prompt, negative, size = null) {
     const sz = size ?? { width: Number(settings.comfy.width) || 512, height: Number(settings.comfy.height) || 768 };
     const widthNum = Number(sz.width) || 512;
     const heightNum = Number(sz.height) || 768;
+    // 双占位符兼容：{{prompt}} 与 %prompt% 均可
     const typed = {
         '{{prompt}}': String(prompt ?? ''),
         '{{negative}}': String(negative ?? ''),
         '{{seed}}': seed,
         '{{width}}': widthNum,
         '{{height}}': heightNum,
+        '%prompt%': String(prompt ?? ''),
+        '%negative%': String(negative ?? ''),
+        '%seed%': seed,
+        '%width%': widthNum,
+        '%height%': heightNum,
     };
     const strSubs = Object.fromEntries(Object.entries(typed).map(([k, v]) => [k, String(v)]));
     const replace = (v) => {
@@ -673,7 +732,7 @@ function buildComfyWorkflow(prompt, negative, size = null) {
         }
         return v;
     };
-    return replace(json);
+    return sanitizeWorkflow(replace(json));
 }
 
 async function generateImage(name, prompt, negative, size = null) {
@@ -1510,10 +1569,10 @@ function ensureUI() {
           <div class="xuanshu-set-row"><label>最大回复</label><input id="xuanshu-set-api-maxtok" type="number" min="16" max="8192" /></div>
           <div class="xuanshu-set-title">▍立绘（ComfyUI）</div>
           <div class="xuanshu-set-row"><label>ComfyUI 地址</label><input id="xuanshu-set-comfy-url" type="text" placeholder="http://127.0.0.1:8188" /></div>
-          <div class="xuanshu-set-row"><label>工作流 JSON</label><textarea id="xuanshu-set-comfy-workflow" rows="10" spellcheck="false" placeholder="粘贴 ComfyUI API 格式工作流；占位符：{{prompt}} {{negative}} {{seed}} {{width}} {{height}}"></textarea></div>
+          <div class="xuanshu-set-row"><label>工作流 JSON</label><textarea id="xuanshu-set-comfy-workflow" rows="10" spellcheck="false" placeholder="粘贴 ComfyUI 导出的 API 格式工作流；占位符两种写法均可：{{prompt}}/{{negative}}/{{seed}}/{{width}}/{{height}} 或 %prompt%/%negative%/%seed%/%width%/%height%"></textarea></div>
           <div class="xuanshu-set-row"><label>尺寸</label><input id="xuanshu-set-comfy-w" type="number" min="256" max="2048" /><span>×</span><input id="xuanshu-set-comfy-h" type="number" min="256" max="2048" /></div>
           <div class="xuanshu-set-row"><label>种子</label><input id="xuanshu-set-comfy-seed" type="number" min="-1" step="1" /></div>
-          <div class="xuanshu-set-note">工作流完全由主人自己粘贴；生成时仅替换 {{prompt}} {{negative}} {{seed}} {{width}} {{height}} 占位符。</div>
+          <div class="xuanshu-set-note">工作流完全由主人自己粘贴（从 ComfyUI「Save (API Format)」导出）；生成时自动替换 {{prompt}} 或 %prompt% 等占位符，并自动剪掉「图像对比」类展示节点。seed/宽高自动转数值。</div>
           <div class="xuanshu-set-title">▍立绘提示词模板（固定分层，自动组装）</div>
           <div class="xuanshu-set-row"><label>构图层</label><input id="xuanshu-set-l-composition" type="text" /></div>
           <div class="xuanshu-set-row"><label>表情层</label><input id="xuanshu-set-l-expression" type="text" /></div>
