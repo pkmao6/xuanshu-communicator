@@ -473,6 +473,73 @@ async function aiChat(messages) {
     return String(reply ?? '').trim();
 }
 
+/* ---------------- ComfyUI 辅助：错误透传 + 模型自动校准 ---------------- */
+
+async function comfyErrorDetail(resp) {
+    try {
+        const j = await resp.json();
+        const parts = [];
+        if (j?.error) {
+            const m = j.error.message ?? '';
+            const t = j.error.type ?? '';
+            parts.push(String(m || t || JSON.stringify(j.error)).slice(0, 400));
+        }
+        if (j?.node_errors && typeof j.node_errors === 'object') {
+            for (const [nid, ne] of Object.entries(j.node_errors)) {
+                const em = ne?.errors?.[0]?.message ?? JSON.stringify(ne);
+                parts.push('节点 ' + nid + '：' + String(em).slice(0, 300));
+            }
+        }
+        if (!parts.length) parts.push(JSON.stringify(j).slice(0, 500));
+        return parts.join('；');
+    } catch {
+        const text = await resp.text().catch(() => '');
+        return text.slice(0, 500) || '（无响应内容）';
+    }
+}
+
+async function autoFixWorkflowModels(wf, base) {
+    // 工作流里 CheckpointLoaderSimple 的模型名若在本机不存在 → 自动替换为可用模型（如：默认模板的 model.safetensors）
+    try {
+        const ir = await fetch(base + '/object_info/CheckpointLoaderSimple', { signal: AbortSignal.timeout(10000) });
+        if (!ir.ok) return;
+        const info = await ir.json();
+        const list = info?.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0];
+        const names = Array.isArray(list) ? list.filter((x) => typeof x === 'string') : [];
+        if (!names.length) return;
+        const pick = (bad) => {
+            const lower = String(bad).toLowerCase();
+            if (lower.includes('xl')) {
+                const m = names.find((n) => n.toLowerCase().includes('xl'));
+                if (m) return m;
+            }
+            if (lower.includes('flux')) {
+                const m = names.find((n) => n.toLowerCase().includes('flux'));
+                if (m) return m;
+            }
+            return names[0];
+        };
+        let replaced = false;
+        const walk = (v) => {
+            if (Array.isArray(v)) { v.forEach(walk); return; }
+            if (v && typeof v === 'object') {
+                if (v.class_type === 'CheckpointLoaderSimple' && typeof v.inputs?.ckpt_name === 'string') {
+                    const cur = v.inputs.ckpt_name;
+                    if (cur && !names.includes(cur)) {
+                        v.inputs.ckpt_name = pick(cur);
+                        replaced = true;
+                    }
+                }
+                for (const k of Object.keys(v)) walk(v[k]);
+            }
+        };
+        walk(wf);
+        if (replaced) {
+            console.log('[玄枢] 已自动校准 ComfyUI 模型：', wf['4']?.inputs?.ckpt_name ?? '');
+        }
+    } catch { /* 校准失败不阻塞，交由 ComfyUI 报错 */ }
+}
+
 /* ---------------- 分层提示词组装（正负词固定模板） ---------------- */
 
 const APPEARANCE_FIELDS = [
@@ -614,13 +681,21 @@ async function generateImage(name, prompt, negative, size = null) {
     const base = String(c.baseUrl || '').replace(/\/+$/, '');
     if (!base) throw new Error('请先在设置里填写 ComfyUI 地址');
     const wf = buildComfyWorkflow(prompt, negative, size);
-    const resp = await fetch(base + '/prompt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: wf }),
-        signal: AbortSignal.timeout(30000),
-    });
-    if (!resp.ok) throw new Error('ComfyUI /prompt 返回 ' + resp.status);
+    await autoFixWorkflowModels(wf, base);
+    let resp;
+    try {
+        resp = await fetch(base + '/prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: wf }),
+            signal: AbortSignal.timeout(30000),
+        });
+    } catch (err) {
+        throw new Error('ComfyUI 连接失败：' + (err?.message ?? err) + '（请确认地址可达、已启动）');
+    }
+    if (!resp.ok) {
+        throw new Error('ComfyUI 拒绝了工作流（HTTP ' + resp.status + '）：' + await comfyErrorDetail(resp));
+    }
     const data = await resp.json();
     const promptId = data?.prompt_id;
     if (!promptId) throw new Error('ComfyUI 未返回 prompt_id：' + JSON.stringify(data).slice(0, 200));
