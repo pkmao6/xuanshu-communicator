@@ -119,6 +119,14 @@ let galleryBatchMode = null;
 let galleryBatchSet = new Set();
 let galleryFilterEmotion = 'all';
 let galleryFilterNsfw = 'all';
+let genChain = Promise.resolve();
+
+// 串行队列：生成任务排队依次执行，绝不静默丢弃
+function enqueueGen(fn) {
+    const run = genChain.then(() => fn(), () => fn());
+    genChain = run.then(() => {}, () => {});
+    return run;
+}
 
 const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const escapeRegExp = (s) => String(s ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1491,8 +1499,6 @@ function renderLog() {
 function setBusy(value) {
     busy = value;
     renderLog();
-    const sendBtn = document.getElementById('xuanshu-send');
-    if (sendBtn) sendBtn.disabled = busy;
 }
 
 function notify() {
@@ -1535,10 +1541,14 @@ async function sendLive(text, targetName = null) {
 
 async function replyLive() {
     const last = [...settings.deviceLog].reverse().find((m) => m.who === 'yexuan');
-    if (!last || busy) return;
+    if (!last) return;
     const target = last.to ?? settings.currentTarget;
     const member = getMember(target) ?? getCurrentMember();
     if (!member) return;
+    await enqueueGen(() => replyLiveCore(member, last));
+}
+
+async function replyLiveCore(member, last) {
     setBusy(true);
     try {
         let clean = '';
@@ -1578,7 +1588,7 @@ async function replyLive() {
             clean = String(await generateQuietPrompt({ quietPrompt, quietName: member.name, forceChId, removeReasoning: true }) ?? '').trim();
         }
         if (!clean) {
-            toastr.warning(member.name + '没有回应……');
+            toastr.warning(member.name + '没有回应……（可能是模型返回了空内容，可稍后重发，或 /comm reply 手动重试）');
             return;
         }
         const mesText = `【${settings.deviceName} · 加密链路】\n${member.name} → ${ownerName()}：\n${clean}`;
@@ -1588,7 +1598,7 @@ async function replyLive() {
         notify();
     } catch (err) {
         console.error('[玄枢] replyLive failed', err);
-        toastr.error('实时回复生成失败：' + (err?.message ?? err));
+        toastr.error('实时回复生成失败：' + (err?.message ?? err) + '（可 /comm reply 重试）');
     } finally {
         setBusy(false);
     }
@@ -1613,7 +1623,10 @@ async function sendSide(text, targetName = null) {
     if (member.log.length > 300) member.log = member.log.slice(-300);
     save();
     renderLog();
-    if (busy) return;
+    await enqueueGen(() => sendSideCore(member));
+}
+
+async function sendSideCore(member) {
     setBusy(true);
     try {
         const memberCtx = await buildMemberContext(member);
@@ -1626,7 +1639,7 @@ async function sendSide(text, targetName = null) {
         const reply = await aiChat(messages);
         const clean = stripNamePrefix(reply, member.name);
         if (!clean) {
-            toastr.warning(member.name + '没有回应……');
+            toastr.warning(member.name + '没有回应……（可能是模型返回了空内容，可稍后重发，或 /comm side 再发一次）');
             return;
         }
         member.log.push({ who: 'yinchong', text: clean, ts: Date.now() });
@@ -1636,7 +1649,7 @@ async function sendSide(text, targetName = null) {
         notify();
     } catch (err) {
         console.error('[玄枢] sendSide failed', err);
-        toastr.error('番外回复生成失败：' + (err?.message ?? err));
+        toastr.error('番外回复生成失败：' + (err?.message ?? err) + '（该消息会在队列里等待重试时机，可稍后重发）');
     } finally {
         setBusy(false);
     }
@@ -2199,7 +2212,7 @@ function bindEvents() {
 
 async function doSend() {
     const input = document.getElementById('xuanshu-input');
-    if (!input || busy) return;
+    if (!input) return;
     const text = input.value;
     if (!String(text).trim()) return;
     input.value = '';
