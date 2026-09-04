@@ -887,6 +887,89 @@
 }
 #xuanshu-crop-size { accent-color: #4af626; flex: 1; }
 
+
+/* ============ v1.6.0 手机端适配 ============ */
+@media (max-width: 560px) {
+    .xuanshu-root {
+        width: calc(100vw - 12px);
+        max-width: none;
+        right: 6px;
+        bottom: 6px;
+        bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+        font-size: 13px;
+    }
+    .xuanshu-bezel { padding: 8px; border-radius: 14px; }
+    .xuanshu-screen {
+        height: min(52vh, 360px);
+        height: min(calc(100dvh - 230px), 360px);
+    }
+    .xuanshu-topbar { touch-action: none; gap: 6px; }
+    .xuanshu-btn {
+        width: 30px;
+        height: 30px;
+        font-size: 14px;
+    }
+    .xuanshu-tabs { flex-wrap: wrap; }
+    .xuanshu-tab { font-size: 13px; padding: 6px 12px; }
+    .xuanshu-clear { font-size: 12px; padding: 5px 10px; }
+    .xuanshu-log { font-size: 13px; line-height: 1.55; }
+    .xuanshu-target-portrait { width: 56px; height: 56px; }
+    .xuanshu-member-portrait { width: 48px; height: 48px; }
+    .xuanshu-member-row { flex-wrap: wrap; row-gap: 6px; }
+    .xuanshu-member-name { font-size: 13px; }
+    .xuanshu-member-row .xuanshu-gal-btn,
+    .xuanshu-member-row button { min-height: 34px; padding: 4px 10px; font-size: 12px; }
+    .xuanshu-gal-head { flex-wrap: wrap; row-gap: 6px; }
+    .xuanshu-gal-head .xuanshu-gal-btn { min-height: 34px; font-size: 12px; padding: 5px 10px; }
+    .xuanshu-set-row { flex-wrap: wrap; row-gap: 4px; }
+    .xuanshu-set-row label { min-width: auto; }
+    .xuanshu-set-row input[type='text'],
+    .xuanshu-set-row input[type='number'],
+    .xuanshu-set-row textarea { min-height: 36px; }
+    .xuanshu-settings-pop { top: 40px; left: 8px; right: 8px; bottom: 8px; padding: 8px; }
+    #xuanshu-gal-grid { grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); }
+    .xuanshu-gen-preset-row button { min-height: 36px; font-size: 12px; padding: 6px 10px; }
+    .xuanshu-gen-btns .xuanshu-invite-btn { min-height: 40px; }
+    .xuanshu-crop-pane { height: min(44vh, 300px); }
+    .xuanshu-crop-previewbox { width: 64px; height: 64px; }
+    .xuanshu-lb-nav { width: 40px; height: 56px; font-size: 30px; }
+    .xuanshu-lb-actions { flex-wrap: wrap; justify-content: center; row-gap: 6px; }
+    .xuanshu-lb-actions button { min-height: 38px; }
+    .xuanshu-launcher {
+        right: 10px;
+        right: calc(10px + env(safe-area-inset-right, 0px));
+        bottom: 92px;
+        bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+        width: 50px;
+        height: 50px;
+    }
+    .xuanshu-send { min-height: 40px; font-size: 13px; }
+    #xuanshu-input { font-size: 16px !important; }
+    .xuanshu-inputrow { align-items: center; }
+    .xuanshu-log { overscroll-behavior: contain; }
+}
+
+/* 触屏设备：所有输入控件 ≥16px 防止 iOS 聚焦自动放大 */
+@media (hover: none) {
+    #xuanshu-input,
+    .xuanshu-settings-pop input,
+    .xuanshu-settings-pop textarea,
+    #xuanshu-crop input,
+    #xuanshu-crop select,
+    #xuanshu-generator input,
+    #xuanshu-generator textarea,
+    #xuanshu-generator select,
+    #xuanshu-tag-edit input,
+    #xuanshu-tag-edit select,
+    #xuanshu-tag-edit textarea {
+        font-size: 16px !important;
+    }
+    .xuanshu-launcher, .xuanshu-btn, .xuanshu-tab, .xuanshu-gal-btn,
+    .xuanshu-invite-btn, .xuanshu-send, .xuanshu-clear {
+        touch-action: manipulation;
+    }
+}
+
 /* ---- 动画 ---- */
 @keyframes xuanshu-blink {
     0%, 55% { opacity: 1; }

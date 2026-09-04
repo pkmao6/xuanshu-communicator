@@ -7,7 +7,7 @@ import { findChar } from '../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 
 const EXT_ID = 'xuanshu';
-const VERSION = '1.5.0';
+const VERSION = '1.6.0';
 
 const DEFAULT_WORKFLOW = JSON.stringify({
     '3': { class_type: 'KSampler', inputs: { seed: '{{seed}}', steps: 25, cfg: 6.5, sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] } },
@@ -2487,6 +2487,14 @@ function refreshChatStyle() {
 
 function clampPosition() {
     if (!$root) return;
+    if (window.innerWidth <= 560) {
+        // 手机端：清掉桌面端遗留的 inline left/top，交给 CSS 右下吸边 + 安全区定位
+        const st = $root[0].style;
+        if (st.left || st.top || st.right || st.bottom) {
+            st.left = st.top = st.right = st.bottom = '';
+        }
+        return;
+    }
     const rect = $root[0].getBoundingClientRect();
     const maxX = Math.max(0, window.innerWidth - 80);
     const maxY = Math.max(0, window.innerHeight - 48);
@@ -2502,7 +2510,7 @@ function clampPosition() {
 function openDevice(saveSetting = true) {
     if (!$root) return;
     $root.css('display', 'flex');
-    if (settings.ui.x != null) {
+    if (Number.isFinite(settings.ui.x) && settings.ui.y != null) {
         $root.css({ left: settings.ui.x + 'px', top: settings.ui.y + 'px', right: 'auto', bottom: 'auto' });
     }
     clampPosition();
@@ -2896,15 +2904,22 @@ function makeDraggable() {
         const offX = e.clientX - rect.left;
         const offY = e.clientY - rect.top;
         const move = (ev) => {
-            const x = Math.min(Math.max(0, ev.clientX - offX), window.innerWidth - 80);
+            const w = Math.min($root.outerWidth() || 400, window.innerWidth);
+            const x = Math.min(Math.max(0, ev.clientX - offX), window.innerWidth - w);
             const y = Math.min(Math.max(0, ev.clientY - offY), window.innerHeight - 48);
             $root.css({ left: x + 'px', top: y + 'px', right: 'auto', bottom: 'auto' });
         };
         const up = () => {
             document.removeEventListener('pointermove', move);
             document.removeEventListener('pointerup', up);
-            settings.ui.x = parseFloat($root.css('left'));
-            settings.ui.y = parseFloat($root.css('top'));
+            if (window.innerWidth <= 560) {
+                // 手机端松手后回到 CSS 右下吸边定位
+                const st = $root[0].style;
+                st.left = st.top = st.right = st.bottom = '';
+            } else {
+                settings.ui.x = parseFloat($root.css('left'));
+                settings.ui.y = parseFloat($root.css('top'));
+            }
             save();
         };
         document.addEventListener('pointermove', move);
@@ -3056,10 +3071,24 @@ async function commCallback(args, value) {
 
 /* ---------------- 启动 ---------------- */
 
+function setupViewportGuard() {
+    let guardTimer = null;
+    window.addEventListener('resize', () => {
+        if (guardTimer) clearTimeout(guardTimer);
+        guardTimer = setTimeout(() => {
+            if (settings.ui.open && $root && $root.is(':visible')) {
+                clampPosition();
+                if (settings.ui.x != null) save();
+            }
+        }, 200);
+    });
+}
+
 function init() {
     ensureUI();
     refreshChatStyle();
     setupHeartbeat();
+    setupViewportGuard();
     registerSlashCommand('comm', commCallback, ['xlink', '玄枢'], settings.deviceName + '通讯器：/comm 消息 | side 消息 | target 名 | invite 名 | kick 名 | members | reply | open | close');
 }
 
