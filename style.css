@@ -32,14 +32,21 @@
 .xuanshu-launcher-label { display: none; }
 .xuanshu-launcher-badge {
     position: absolute;
-    top: 2px;
-    right: 2px;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
+    top: 0;
+    right: 0;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
     background: #ff4d6d;
+    color: #fff;
+    font-size: 10px;
+    font-weight: bold;
+    line-height: 16px;
+    text-align: center;
     box-shadow: 0 0 8px rgba(255, 77, 109, 0.9);
     animation: xuanshu-pulse 1s ease-in-out infinite;
+    z-index: 2;
 }
 
 /* ---- 终端本体 ---- */
@@ -689,7 +696,7 @@
 /* ---- v1.4：图库面板整体（照搬色色灵感） ---- */
 .xuanshu-gal-btn {
     border: 1px solid rgba(74, 246, 38, 0.4);
-    background: transparent;
+    background: rgba(4, 20, 4, 0.9);
     color: #9dff8a;
     font-family: inherit;
     font-size: 11px;
@@ -697,6 +704,25 @@
     cursor: pointer;
     border-radius: 4px;
     flex-shrink: 0;
+}
+
+/* ---- 覆盖酒馆主题给插件按钮套的白底样式 ---- */
+.xuanshu-member-edit,
+.xuanshu-member-gallery,
+.xuanshu-member-kick {
+    background: rgba(4, 20, 4, 0.92);
+    color: #9dff8a;
+    border: 1px solid rgba(74, 246, 38, 0.45);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 4px 10px;
+    cursor: pointer;
+}
+.xuanshu-member-edit:hover,
+.xuanshu-member-gallery:hover,
+.xuanshu-member-kick:hover {
+    background: rgba(74, 246, 38, 0.18);
 }
 .xuanshu-gal-btn:hover { background: rgba(74, 246, 38, 0.15); }
 .xuanshu-gal-btn:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -784,7 +810,7 @@
 .xuanshu-gen-preset-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .xuanshu-gen-preset-row button {
     border: 1px solid rgba(74, 246, 38, 0.4);
-    background: transparent;
+    background: rgba(4, 20, 4, 0.9);
     color: #57c93e;
     font-family: inherit;
     font-size: 11px;
@@ -987,6 +1013,17 @@
     .xuanshu-invite-btn, .xuanshu-send, .xuanshu-clear {
         touch-action: manipulation;
     }
+}
+
+/* ---- 未读消息：悬浮球闪烁 ---- */
+.xuanshu-launcher.xuanshu-unread {
+    border-color: #ff4d6d;
+    box-shadow: 0 0 18px rgba(255, 77, 109, 0.85), 0 0 42px rgba(255, 77, 109, 0.4), inset 0 0 12px rgba(255, 77, 109, 0.25);
+    animation: xuanshu-unread-blink 0.9s ease-in-out infinite;
+}
+@keyframes xuanshu-unread-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
 }
 
 /* ---- 动画 ---- */

@@ -7,7 +7,7 @@ import { findChar } from '../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 
 const EXT_ID = 'xuanshu';
-const VERSION = '1.6.4';
+const VERSION = '1.7.0';
 
 const DEFAULT_WORKFLOW = JSON.stringify({
     '3': { class_type: 'KSampler', inputs: { seed: '{{seed}}', steps: 25, cfg: 6.5, sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] } },
@@ -47,6 +47,7 @@ const defaultSettings = {
     deviceLog: [],
     members: [],
     currentTarget: '',
+    unread: 0,
     ui: { open: true, tab: 'live', x: null, y: null, minimized: false },
 };
 
@@ -2042,12 +2043,39 @@ function setBusy(value) {
     renderLog();
 }
 
-function notify() {
+function notify(memberName) {
+    const visible = $root && $root.is(':visible');
     const badge = document.getElementById('xuanshu-launcher-badge');
-    if (badge) badge.style.display = 'block';
-    if ($root) {
-        $root.addClass('xuanshu-glow');
-        setTimeout(() => $root.removeClass('xuanshu-glow'), 1600);
+    if (!visible) {
+        // 终端未打开：计入未读，悬浮球闪烁 + 徽标计数 + 弹提示
+        settings.unread = (settings.unread ?? 0) + 1;
+        save();
+        updateUnreadUI();
+        if (typeof toastr !== 'undefined' && toastr.info) {
+            toastr.info('「' + memberName + '」发来新消息 · 点右下角「' + settings.deviceName + '」查看', '玄枢通讯器');
+        }
+    } else {
+        if (badge) badge.style.display = 'block';
+        if ($root) {
+            $root.addClass('xuanshu-glow');
+            setTimeout(() => $root.removeClass('xuanshu-glow'), 1600);
+        }
+    }
+}
+
+function updateUnreadUI() {
+    const la = document.getElementById('xuanshu-launcher');
+    const badge = document.getElementById('xuanshu-launcher-badge');
+    const n = settings.unread ?? 0;
+    if (la) la.classList.toggle('xuanshu-unread', n > 0);
+    if (badge) {
+        if (n > 0) {
+            badge.textContent = n > 99 ? '99+' : String(n);
+            badge.style.display = 'block';
+        } else {
+            badge.textContent = '';
+            badge.style.display = 'none';
+        }
     }
 }
 
@@ -2136,7 +2164,7 @@ async function replyLiveCore(member, last) {
         await sendMessageAs({ name: settings.deviceName, compact: true }, mesText);
         pushLog('deviceLog', { who: 'yinchong', to: member.name, text: clean, ts: Date.now() });
         renderLog();
-        notify();
+        notify(member.name);
     } catch (err) {
         console.error('[玄枢] replyLive failed', err);
         toastr.error('实时回复生成失败：' + (err?.message ?? err) + '（可 /comm reply 重试）');
@@ -2187,7 +2215,7 @@ async function sendSideCore(member) {
         if (member.log.length > 300) member.log = member.log.slice(-300);
         save();
         renderLog();
-        notify();
+        notify(member.name);
     } catch (err) {
         console.error('[玄枢] sendSide failed', err);
         toastr.error('番外回复生成失败：' + (err?.message ?? err) + '（该消息会在队列里等待重试时机，可稍后重发）');
@@ -2217,7 +2245,7 @@ async function heartbeat() {
         if (member.log.length > 300) member.log = member.log.slice(-300);
         save();
         renderLog();
-        notify();
+        notify(member.name);
         if (!settings.ui.open || settings.ui.tab !== 'side' || settings.currentTarget !== member.name) {
             toastr.info(settings.deviceName + ' · 番外频道有新讯息', member.name + ' 发来了私讯', { timeOut: 4000 });
         }
@@ -2552,6 +2580,7 @@ function openDevice(saveSetting = true) {
     $root.toggleClass('xuanshu-minimized', !!settings.ui.minimized);
     $('#xuanshu-launcher').hide();
     $('#xuanshu-launcher-badge').hide();
+    if (settings.unread) settings.unread = 0;
     renderLog();
     if (isNarrowViewport()) {
         // 等布局稳定后再回正一次（内容高度变化后终端可能溢出屏幕）
@@ -3131,6 +3160,7 @@ function init() {
         $('#xuanshu-launcher').css('display', '').show();
     }
     positionMobileUI();
+    updateUnreadUI();
     refreshChatStyle();
     setupHeartbeat();
     setupViewportGuard();
