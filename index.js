@@ -1457,6 +1457,18 @@ function syncTargetUI() {
     renderTargetPortrait();
 }
 
+function viewCurrentPortrait(name, entryId = null) {
+    const member = getMember(name);
+    if (!$root || !member) return;
+    const g = getGallery(name);
+    if (!g.length) {
+        toastr.info(member.name + ' 还没有立绘——点「立绘」按钮去生成一张吧');
+        return;
+    }
+    const entry = entryId ? (g.find((x) => x.id === entryId) ?? null) : getPortraitEntry(name);
+    openLightbox(name, entry ? entry.id : g[0].id);
+}
+
 function renderTargetPortrait() {
     const holder = document.getElementById('xuanshu-target-portrait');
     if (!holder) return;
@@ -1465,8 +1477,24 @@ function renderTargetPortrait() {
     if (!member) return;
     loadEntryData(getPortraitEntry(member.name)).then((url) => {
         if (url && document.getElementById('xuanshu-target-portrait') === holder) {
-            holder.innerHTML = `<img src="${url}" alt="" title="点 ⚙ 通讯录的「立绘」按钮管理图库" />`;
+            holder.innerHTML = `<img src="${url}" alt="" title="点击查看当前立绘（可翻看整本图库）" />`;
         }
+    });
+}
+
+function bindPortraitClicks() {
+    // 终端头部头像：点开当前立绘灯箱
+    $('#xuanshu-target-portrait').on('click', () => {
+        const member = getCurrentMember();
+        if (!member) return;
+        viewCurrentPortrait(member.name);
+    });
+    // 通讯录成员头像：点开该角色的立绘灯箱
+    $root.find('#xuanshu-members-list').on('click', '.xuanshu-member-portrait', function (e) {
+        e.stopPropagation();
+        const row = $(this).closest('.xuanshu-member-row');
+        const name = row.data('member');
+        if (name) viewCurrentPortrait(name);
     });
 }
 
@@ -2019,6 +2047,7 @@ function bindEvents() {
         save();
         renderLog();
     });
+    bindPortraitClicks();
     $('#xuanshu-input').on('input', function () { autoGrow(this); });
     $('#xuanshu-input').on('keydown', function (e) {
         if (e.key === 'Enter' && !e.shiftKey) {

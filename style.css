@@ -443,16 +443,22 @@
 
 /* ---- v1.2：立绘与档案 ---- */
 .xuanshu-target-portrait {
-    width: 30px;
-    height: 30px;
-    border-radius: 6px;
+    width: 64px;
+    height: 64px;
+    border-radius: 12px;
     overflow: hidden;
     flex-shrink: 0;
-    border: 1px solid rgba(74, 246, 38, 0.35);
+    border: 2px solid rgba(74, 246, 38, 0.45);
     background: rgba(74, 246, 38, 0.06);
     display: flex;
     align-items: center;
     justify-content: center;
+    cursor: zoom-in;
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.xuanshu-target-portrait:hover {
+    box-shadow: 0 0 14px rgba(74, 246, 38, 0.6);
+    transform: scale(1.03);
 }
 .xuanshu-target-portrait img {
     width: 100%;
@@ -460,16 +466,28 @@
     object-fit: cover;
 }
 .xuanshu-member-portrait {
-    width: 30px;
-    height: 30px;
-    border-radius: 6px;
+    width: 52px;
+    height: 52px;
+    border-radius: 10px;
     overflow: hidden;
     flex-shrink: 0;
-    border: 1px solid rgba(74, 246, 38, 0.3);
+    border: 1px solid rgba(74, 246, 38, 0.35);
     object-fit: cover;
     display: flex;
     align-items: center;
     justify-content: center;
+    cursor: zoom-in;
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.xuanshu-member-portrait:hover {
+    box-shadow: 0 0 12px rgba(74, 246, 38, 0.5);
+    transform: scale(1.04);
+}
+.xuanshu-member-portrait-empty {
+    background: rgba(74, 246, 38, 0.08);
+    color: #2f7a22;
+    font-size: 16px;
+    cursor: default;
 }
 .xuanshu-member-portrait-empty {
     background: rgba(74, 246, 38, 0.08);
