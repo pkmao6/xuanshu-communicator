@@ -7,6 +7,7 @@ import { findChar } from '../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 
 const EXT_ID = 'xuanshu';
+const VERSION = '1.5.0';
 
 const DEFAULT_WORKFLOW = JSON.stringify({
     '3': { class_type: 'KSampler', inputs: { seed: '{{seed}}', steps: 25, cfg: 6.5, sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] } },
@@ -1128,7 +1129,7 @@ function refreshRosterUI() {
             <span class="xuanshu-member-portrait xuanshu-member-portrait-empty">?</span>
             <span class="xuanshu-member-name">${escapeHtml(m.name)}</span>
             <button class="xuanshu-member-edit" title="编辑档案">档案</button>
-            <button class="xuanshu-member-avatar" title="自截方形头像">头像</button>
+            <button class="xuanshu-member-avatar xuanshu-gal-primary" title="用立绘自截方形头像（也可在立绘灯箱里点 ✂）">✂ 头像</button>
             <button class="xuanshu-member-gallery" title="图库与立绘">立绘</button>
             <label class="xuanshu-member-hb" title="参与心跳待机"><input type="checkbox" class="xuanshu-member-heartbeat" ${m.heartbeat ? 'checked' : ''} /> 心跳</label>
             <label class="xuanshu-member-hb" title="回复时实时联动角色中枢"><input type="checkbox" class="xuanshu-member-link" ${m.linkHub ? 'checked' : ''} /> 中枢</label>
@@ -1386,7 +1387,7 @@ function renderGallery() {
     const grid = $('#xuanshu-gal-grid');
     grid.empty();
     if (!g.length) {
-        grid.append($('<div class="xuanshu-set-note">还没有立绘，点右上「生成新立绘」开始</div>'));
+        grid.append($('<div class="xuanshu-set-note">还没有立绘，点右上「生成新立绘」开始；有图后每张图可点 ★设立绘 / ✂截头像</div>'));
     } else if (!visible.length) {
         grid.append($('<div class="xuanshu-set-note">没有符合筛选条件的立绘</div>'));
     }
@@ -1642,6 +1643,7 @@ function openLightbox(name, id) {
         </div>
         <div class="xuanshu-lb-counter" id="xuanshu-lb-counter"></div>
         <div class="xuanshu-lb-actions">
+            <button class="xuanshu-lb-avatar" title="用这张立绘截取方形头像">✂ 截头像</button>
             <button class="xuanshu-lb-star" title="设为立绘">★ 设为立绘</button>
             <button class="xuanshu-lb-regen" title="把生图内容载入生成表单">↻ 重新生图</button>
             <button class="xuanshu-lb-edit" title="编辑标签">✎ 标签</button>
@@ -2244,7 +2246,7 @@ function ensureUI() {
           <div class="xuanshu-set-row xuanshu-set-check"><label><input id="xuanshu-set-autoreply" type="checkbox" /> 实时频道自动回复</label></div>
           <div class="xuanshu-set-row xuanshu-set-check"><label><input id="xuanshu-set-heartbeat" type="checkbox" /> 心跳待机（成员随机主动来讯）</label></div>
           <div class="xuanshu-set-row"><label>心跳间隔（分钟）</label><input id="xuanshu-set-heartbeatmin" type="number" min="1" max="1440" /></div>
-          <div class="xuanshu-set-note">修改后即时生效，记录自动保存。API 密钥仅保存在本地设置中。</div>
+          <div class="xuanshu-set-note" id="xuanshu-version-note">修改后即时生效，记录自动保存。API 密钥仅保存在本地设置中。</div>
         </div>
         <div id="xuanshu-gallery" class="xuanshu-settings-pop" style="display:none">
           <div class="xuanshu-gal-head">
@@ -2724,6 +2726,13 @@ function bindEvents() {
         syncTargetUI();
         refreshRosterUI();
     });
+    $('#xuanshu-lightbox').on('click', '.xuanshu-lb-avatar', () => {
+        if (!lbState) return;
+        const cur = lbState.entries[lbState.index];
+        const name = lbState.name;
+        closeLightbox();
+        openAvatarCrop(name, cur.id);
+    });
     $('#xuanshu-lightbox').on('click', '.xuanshu-lb-regen', () => {
         if (!lbState) return;
         const cur = lbState.entries[lbState.index];
@@ -2819,6 +2828,8 @@ function makeDraggable() {
 }
 
 function fillSettingsPanel() {
+    const vNote = document.getElementById('xuanshu-version-note');
+    if (vNote) vNote.textContent = '玄枢通讯器 v' + VERSION + ' · 看到 v' + VERSION + ' 即代表已加载最新代码（如不是请强制刷新 Ctrl+F5）';
     const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
     const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = v; };
     setVal('xuanshu-set-device', settings.deviceName);
@@ -2964,5 +2975,5 @@ function init() {
 
 jQuery(async () => {
     init();
-    console.log('[玄枢通讯器] 已启动。主人，随时可以使用通讯器了。');
+    console.log('[玄枢通讯器] v' + VERSION + ' 已启动。主人，随时可以使用通讯器了。');
 });
