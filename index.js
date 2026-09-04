@@ -7,7 +7,7 @@ import { findChar } from '../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 
 const EXT_ID = 'xuanshu';
-const VERSION = '1.6.3';
+const VERSION = '1.6.4';
 
 const DEFAULT_WORKFLOW = JSON.stringify({
     '3': { class_type: 'KSampler', inputs: { seed: '{{seed}}', steps: 25, cfg: 6.5, sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] } },
@@ -2545,10 +2545,18 @@ function openDevice(saveSetting = true) {
         $root.css({ left: settings.ui.x + 'px', top: settings.ui.y + 'px', right: 'auto', bottom: 'auto' });
     }
     clampPosition();
+    if (isNarrowViewport() && settings.ui.minimized) {
+        // 手机端点球打开时自动展开完整终端，避免只出现一条顶栏条
+        settings.ui.minimized = false;
+    }
     $root.toggleClass('xuanshu-minimized', !!settings.ui.minimized);
     $('#xuanshu-launcher').hide();
     $('#xuanshu-launcher-badge').hide();
     renderLog();
+    if (isNarrowViewport()) {
+        // 等布局稳定后再回正一次（内容高度变化后终端可能溢出屏幕）
+        requestAnimationFrame(() => positionMobileUI());
+    }
     if (saveSetting) {
         settings.ui.open = true;
         save();
@@ -2944,9 +2952,8 @@ function makeDraggable() {
             document.removeEventListener('pointermove', move);
             document.removeEventListener('pointerup', up);
             if (isNarrowViewport()) {
-                // 手机端松手后回到 CSS 右下吸边定位
-                const st = $root[0].style;
-                st.left = st.top = st.right = st.bottom = '';
+                // 手机端：松手后重新顶部锚定回正（ST 手机布局下 CSS bottom 锚点失效，清空会让终端飞出屏幕）
+                positionMobileUI();
             } else {
                 settings.ui.x = parseFloat($root.css('left'));
                 settings.ui.y = parseFloat($root.css('top'));
