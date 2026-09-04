@@ -169,7 +169,109 @@ function pushLog(key, entry) {
     save();
 }
 
-/* ---------------- 图库（localStorage） ---------------- */
+/* ---------------- 图片仓库：IndexedDB（大图）→ localStorage（兜底） ---------------- */
+
+const IMG_DB = 'xuanshu-images';
+const imgCache = new Map();
+
+function idbOpen() {
+    return new Promise((res, rej) => {
+        try {
+            if (typeof indexedDB === 'undefined') return rej(new Error('IndexedDB 不可用'));
+            const req = indexedDB.open(IMG_DB, 1);
+            req.onupgradeneeded = () => {
+                try { req.result.createObjectStore('images'); } catch { /* 已存在 */ }
+            };
+            req.onsuccess = () => res(req.result);
+            req.onerror = () => rej(req.error);
+        } catch (e) { rej(e); }
+    });
+}
+
+async function imgStorePut(key, dataUrl) {
+    const db = await idbOpen();
+    try {
+        await new Promise((res, rej) => {
+            const tx = db.transaction('images', 'readwrite');
+            tx.objectStore('images').put(dataUrl, key);
+            tx.oncomplete = res;
+            tx.onerror = () => rej(tx.error);
+        });
+    } finally {
+        db.close();
+    }
+}
+
+async function imgStoreGet(key) {
+    const db = await idbOpen();
+    try {
+        return await new Promise((res, rej) => {
+            const r = db.transaction('images').objectStore('images').get(key);
+            r.onsuccess = () => res(r.result);
+            r.onerror = () => rej(r.error);
+        });
+    } finally {
+        db.close();
+    }
+}
+
+async function imgStoreDel(key) {
+    try {
+        const db = await idbOpen();
+        try {
+            await new Promise((res, rej) => {
+                const tx = db.transaction('images', 'readwrite');
+                tx.objectStore('images').delete(key);
+                tx.oncomplete = res;
+                tx.onerror = () => rej(tx.error);
+            });
+        } finally {
+            db.close();
+        }
+    } catch { /* 忽略 */ }
+}
+
+async function persistImage(key, dataUrl) {
+    try {
+        await imgStorePut(key, dataUrl);
+        imgCache.set(key, dataUrl);
+        return 'idb';
+    } catch { /* 转 localStorage 兜底 */ }
+    try {
+        localStorage.setItem('xuanshu-img-' + key, dataUrl);
+        imgCache.set(key, dataUrl);
+        return 'ls';
+    } catch { /* 都不行 */ }
+    return 'none';
+}
+
+async function loadImage(key, inlineUrl) {
+    if (inlineUrl) return inlineUrl;
+    if (imgCache.has(key)) return imgCache.get(key);
+    try {
+        const v = await imgStoreGet(key);
+        if (typeof v === 'string' && v) {
+            imgCache.set(key, v);
+            return v;
+        }
+    } catch { /* 继续 */ }
+    try {
+        const v = localStorage.getItem('xuanshu-img-' + key);
+        if (v) {
+            imgCache.set(key, v);
+            return v;
+        }
+    } catch { /* 继续 */ }
+    return '';
+}
+
+async function deleteImage(key) {
+    imgCache.delete(key);
+    await imgStoreDel(key);
+    try { localStorage.removeItem('xuanshu-img-' + key); } catch { /* 忽略 */ }
+}
+
+/* ---------------- 图库（localStorage 只存元数据） ---------------- */
 
 function galleryKey(name) {
     return 'xuanshu-gallery-' + name;
@@ -193,7 +295,7 @@ function saveGallery(name, arr) {
     } catch { /* 容量错误忽略 */ }
 }
 
-function getPortrait(name) {
+function getPortraitEntry(name) {
     let g = getGallery(name);
     // v1.2 旧单图迁移
     try {
@@ -205,19 +307,24 @@ function getPortrait(name) {
         }
     } catch { /* 忽略 */ }
     const pool = g.filter((x) => x.inRandom);
-    if (pool.length >= 2) {
-        return pool[Math.floor(Math.random() * pool.length)].dataUrl;
-    }
-    const p = g.find((x) => x.isPortrait) ?? g[0];
-    return p?.dataUrl ?? '';
+    if (pool.length >= 2) return pool[Math.floor(Math.random() * pool.length)];
+    return g.find((x) => x.isPortrait) ?? g[0] ?? null;
 }
 
-function addGalleryImage(name, { dataUrl, prompt, negative }) {
+async function loadEntryData(entry) {
+    if (!entry) return '';
+    if (entry.dataUrl) return entry.dataUrl;
+    return loadImage(entry.id, '');
+}
+
+async function addGalleryImage(name, { dataUrl, prompt, negative }) {
     const g = getGallery(name);
-    const entry = { id: 'img-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), dataUrl, prompt: prompt ?? '', negative: negative ?? '', emotion: '', nsfw: undefined, createdAt: Date.now(), isPortrait: g.length === 0, inRandom: false };
+    const entry = { id: 'img-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), dataUrl: '', prompt: prompt ?? '', negative: negative ?? '', emotion: '', nsfw: undefined, createdAt: Date.now(), isPortrait: g.length === 0, inRandom: false };
+    const where = await persistImage(entry.id, dataUrl);
+    if (where === 'none') entry.dataUrl = dataUrl; // 两处都存不下：仅本次会话内存可见
     g.push(entry);
     saveGallery(name, g);
-    return entry;
+    return { entry, persisted: where };
 }
 
 function updateGalleryImage(name, id, patch) {
@@ -238,9 +345,12 @@ function removeGalleryImage(name, id) {
     const g = getGallery(name).filter((x) => x.id !== id);
     if (g.length && !g.some((x) => x.isPortrait)) g[g.length - 1].isPortrait = true;
     saveGallery(name, g);
+    deleteImage(id);
 }
 
 function removeGalleryAll(name) {
+    const g = getGallery(name);
+    for (const x of g) deleteImage(x.id);
     try { localStorage.removeItem(galleryKey(name)); } catch { /* 忽略 */ }
 }
 
@@ -875,9 +985,8 @@ function refreshRosterUI() {
         listEl.append($('<div class="xuanshu-set-note">尚未建立任何角色档案</div>'));
     }
     for (const m of settings.members) {
-        const portrait = getPortrait(m.name);
         const row = $(`<div class="xuanshu-member-row" data-member="${escapeHtml(m.name)}">
-            ${portrait ? `<img class="xuanshu-member-portrait" src="${portrait}" alt="" />` : '<span class="xuanshu-member-portrait xuanshu-member-portrait-empty">?</span>'}
+            <span class="xuanshu-member-portrait xuanshu-member-portrait-empty">?</span>
             <span class="xuanshu-member-name">${escapeHtml(m.name)}</span>
             <button class="xuanshu-member-edit" title="编辑档案">档案</button>
             <button class="xuanshu-member-gallery" title="图库与立绘">立绘</button>
@@ -902,6 +1011,10 @@ function refreshRosterUI() {
         row.find('.xuanshu-member-edit').on('click', () => openProfileEditor(m.name));
         row.find('.xuanshu-member-gallery').on('click', () => openGallery(m.name));
         listEl.append(row);
+        const thumbHolder = row.find('.xuanshu-member-portrait').first();
+        loadEntryData(getPortraitEntry(m.name)).then((url) => {
+            if (url && row.is(':visible')) thumbHolder.replaceWith(`<img class="xuanshu-member-portrait" src="${url}" alt="" />`);
+        });
     }
 }
 
@@ -911,18 +1024,15 @@ function openProfileEditor(name) {
     const ed = $root.find('#xuanshu-profile-editor');
     ed.empty();
     ed.append($(`<div class="xuanshu-set-title">▍档案编辑 · ${escapeHtml(name)}</div>`));
+    let tagRows = '';
+    for (const [key, label] of APPEARANCE_FIELDS) {
+        tagRows += `<div class="xuanshu-set-row"><label>${label}</label><input id="xuanshu-pe-ap-${key}" type="text" /></div>`;
+    }
     const html = `
         <div class="xuanshu-set-row"><label>名字</label><input id="xuanshu-pe-name" type="text" value="${escapeHtml(name)}" disabled /></div>
         <div class="xuanshu-set-row"><label>档案文本</label><textarea id="xuanshu-pe-profile" rows="6" placeholder="外观、性格、与机主的关系、背景……回复时作为依据"></textarea></div>
         <div class="xuanshu-set-title">▍外貌 Tag 档案（本角色专属，立绘组装时取这里）</div>
-        <div class="xuanshu-set-row"><label>发色/发型</label><input id="xuanshu-pe-ap-hair" type="text" /></div>
-        <div class="xuanshu-set-row"><label>瞳色</label><input id="xuanshu-pe-ap-eyes" type="text" /></div>
-        <div class="xuanshu-set-row"><label>体型/身材</label><input id="xuanshu-pe-ap-body" type="text" /></div>
-        <div class="xuanshu-set-row"><label>胸臀特征</label><input id="xuanshu-pe-ap-bust" type="text" /></div>
-        <div class="xuanshu-set-row"><label>服装/饰品</label><input id="xuanshu-pe-ap-outfit" type="text" /></div>
-        <div class="xuanshu-set-row"><label>特征/纹身</label><input id="xuanshu-pe-ap-features" type="text" /></div>
-        <div class="xuanshu-set-row"><label>姿势/神态</label><input id="xuanshu-pe-ap-pose" type="text" /></div>
-        <div class="xuanshu-set-row"><label>其他</label><input id="xuanshu-pe-ap-other" type="text" /></div>
+        ${tagRows}
         <div class="xuanshu-set-row"><button id="xuanshu-pe-save" class="xuanshu-invite-btn">保存档案</button></div>`;
     ed.append($(html));
     const ta = document.getElementById('xuanshu-pe-profile');
@@ -1024,7 +1134,7 @@ function renderGallery() {
             : '<span class="xuanshu-gal-tag xuanshu-gal-tag-daily">日常</span>';
         const inBatch = galleryBatchMode && galleryBatchSet.has(img.id);
         const item = $(`<div class="xuanshu-gal-item${img.isPortrait ? ' is-portrait' : ''}${img.inRandom ? ' in-random' : ''}${inBatch ? ' batch-selected' : ''}" data-id="${img.id}" title="${escapeHtml(img.prompt).slice(0, 150)}">
-            <img src="${img.dataUrl}" alt="" loading="lazy">
+            <img alt="" loading="lazy">
             <span class="xuanshu-gal-check">${inBatch ? '✓' : ''}</span>
             <div class="xuanshu-gal-actions">
                 <span data-act="pick" title="设为立绘">★</span>
@@ -1068,6 +1178,12 @@ function renderGallery() {
             openLightbox(galleryMember, img.id);
         });
         grid.append(item);
+        const imgEl = item.find('img').first()[0];
+        if (imgEl) {
+            loadEntryData(img).then((url) => {
+                if (url && imgEl.isConnected && !imgEl.getAttribute('src')) imgEl.src = url;
+            });
+        }
     }
     const bar = document.getElementById('xuanshu-gal-batch-bar');
     if (bar) {
@@ -1098,8 +1214,10 @@ async function execBatch() {
     } else {
         let n = 0;
         for (const img of getGallery(name).filter((x) => galleryBatchSet.has(x.id))) {
+            const url = await loadEntryData(img);
+            if (!url) continue;
             const a = document.createElement('a');
-            a.href = img.dataUrl;
+            a.href = url;
             a.download = 'xuanshu-' + name + '-' + Date.now() + '-' + (n++) + '.png';
             document.body.appendChild(a);
             a.click();
@@ -1220,17 +1338,15 @@ async function runGen() {
     const status = $('#xuanshu-gen-status');
     status.text('▌正在生成……（约 10 秒到数分钟，请保持页面开启）');
     try {
-        const startedAt = Date.now();
         const dataUrl = await generateImage(galleryMember, prompt, negative, size, (sec) => {
             status.text('▌正在生成…… 已等待约 ' + sec + ' 秒（最久 30 分钟），请保持页面开启');
         });
-        void startedAt;
-        const entry = addGalleryImage(galleryMember, { dataUrl, prompt, negative });
+        const { entry, persisted } = await addGalleryImage(galleryMember, { dataUrl, prompt, negative });
         saveDraft(galleryMember, prompt, negative);
         renderGallery();
         syncTargetUI();
         refreshRosterUI();
-        status.text('生成完毕 ✓');
+        status.text(persisted === 'none' ? '生成完毕，但浏览器存储已满，图片可能无法长期保存！请导出或清理部分旧图' : '生成完毕 ✓');
         openLightbox(galleryMember, entry.id);
     } catch (err) {
         console.error('[玄枢] 立绘生成失败', err);
@@ -1275,8 +1391,10 @@ function renderLightbox() {
     const setImg = (slide, entry) => {
         const img = slide.querySelector('img');
         if (entry) {
-            if (img.getAttribute('src') !== entry.dataUrl) img.src = entry.dataUrl;
             img.style.display = '';
+            loadEntryData(entry).then((url) => {
+                if (url && img.isConnected && img.getAttribute('src') !== url) img.src = url;
+            });
         } else {
             img.removeAttribute('src');
             img.style.display = 'none';
@@ -1335,8 +1453,13 @@ function renderTargetPortrait() {
     const holder = document.getElementById('xuanshu-target-portrait');
     if (!holder) return;
     const member = getCurrentMember();
-    const portrait = member ? getPortrait(member.name) : '';
-    holder.innerHTML = portrait ? `<img src="${portrait}" alt="" title="点 ⚙ 通讯录的「立绘」按钮管理图库" />` : '';
+    holder.innerHTML = '';
+    if (!member) return;
+    loadEntryData(getPortraitEntry(member.name)).then((url) => {
+        if (url && document.getElementById('xuanshu-target-portrait') === holder) {
+            holder.innerHTML = `<img src="${url}" alt="" title="点 ⚙ 通讯录的「立绘」按钮管理图库" />`;
+        }
+    });
 }
 
 function renderLog() {
@@ -1900,7 +2023,7 @@ function bindEvents() {
         for (const file of files) {
             try {
                 const dataUrl = await blobToDataUrl(file);
-                addGalleryImage(galleryMember, { dataUrl, prompt: '', negative: '' });
+                await addGalleryImage(galleryMember, { dataUrl, prompt: '', negative: '' });
             } catch (err) {
                 toastr.error('上传失败：' + (err?.message ?? err));
             }
