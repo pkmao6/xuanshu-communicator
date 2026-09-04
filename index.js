@@ -99,6 +99,8 @@ for (const m of settings.members) {
     }
     m.appearance = Object.assign({ face: '', hair: '', eyes: '', body: '', bust: '', outfit: '', features: '', other: '' }, m.appearance ?? {});
     delete m.appearance.pose;
+    m.worldLinks = Array.isArray(m.worldLinks) ? m.worldLinks : [];
+    m.worldBlocked = Array.isArray(m.worldBlocked) ? m.worldBlocked : [];
     m.heartbeat = m.heartbeat ?? true;
     m.linkHub = m.linkHub ?? true;
     m.log = Array.isArray(m.log) ? m.log : [];
@@ -375,20 +377,140 @@ function saveDraft(name, prompt, negative) {
 
 /* ---------------- 角色中枢联动 ---------------- */
 
+function collectWorldbookEntries() {
+    // world_info 是按 uid 键名的普通对象（并混有 charLore/globalSelect 等容器键）
+    const out = [];
+    try {
+        const src = world_info && typeof world_info === 'object' ? world_info : {};
+        for (const k of Object.keys(src)) {
+            const v = src[k];
+            if (!v || typeof v !== 'object') continue;
+            // 跳过容器键
+            if (k === 'charLore' || k === 'globalSelect') continue;
+            if (!('content' in v) && !('key' in v) && !('name' in v) && !('uid' in v) && !('comment' in v)) continue;
+            // 条目自身可能没有 uid 字段：以对象键兜底，保证 id 稳定
+            if (!v.uid) { try { v.uid = k; } catch { /* 忽略 */ } }
+            out.push(v);
+        }
+        // 角色卡内嵌世界书（charLore 数组中每项可能带 entries/extraBooks 内的条目）
+        try {
+            const cl = src.charLore;
+            if (Array.isArray(cl)) {
+                for (const item of cl) {
+                    if (!item || typeof item !== 'object') continue;
+                    if (Array.isArray(item.entries)) {
+                        for (const e of item.entries) {
+                            if (e && typeof e === 'object' && ('content' in e || 'key' in e)) out.push(e);
+                        }
+                    }
+                    if (Array.isArray(item.extraBooks)) {
+                        for (const book of item.extraBooks) {
+                            if (!book || typeof book !== 'object') continue;
+                            const entries = book.entries ?? (typeof book.content === 'object' ? book.content : null);
+                            if (Array.isArray(entries)) {
+                                for (const e of entries) {
+                                    if (e && typeof e === 'object' && ('content' in e || 'key' in e)) out.push(e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch { /* 内嵌世界书解析失败忽略 */ }
+    } catch (err) {
+        console.warn('[玄枢] 世界书读取失败', err);
+    }
+    return out;
+}
+
+function worldbookEntryStrings(e) {
+    const strings = [];
+    const push = (x) => {
+        if (typeof x === 'string' && x.trim()) strings.push(x.trim());
+    };
+    push(e.name);
+    push(e.comment);
+    push(e.uid);
+    if (Array.isArray(e.key)) e.key.forEach(push);
+    else push(e.key);
+    if (Array.isArray(e.secondary_keys)) e.secondary_keys.forEach(push);
+    else push(e.secondary_keys);
+    return strings.filter((s) => s.length >= 2);
+}
+
+function worldbookIdOf(e) {
+    const k = Array.isArray(e.key) ? e.key[0] : e.key;
+    return String(e.uid ?? k ?? e.name ?? e.comment ?? '').trim() || ('e' + Math.random().toString(36).slice(2, 7));
+}
+
+function worldbookDisplayName(e) {
+    const k = Array.isArray(e.key) ? e.key[0] : e.key;
+    return String(e.name ?? e.comment ?? k ?? e.uid ?? '未命名条目').slice(0, 60);
+}
+
+// 成员 × 世界书关联状态：auto=自动匹配命中；manual=主人手动添加；blocked=自动命中但被主人移除
+function memberWorldbookState(member) {
+    const all = collectWorldbookEntries();
+    const n = String(member?.name ?? '');
+    const manualIds = new Set((member?.worldLinks ?? []).map((l) => l?.id).filter(Boolean));
+    const blockedIds = new Set((member?.worldBlocked ?? []).map((x) => String(x ?? '')));
+    const auto = [];
+    const manual = [];
+    if (n) {
+        for (const e of all) {
+            const id = worldbookIdOf(e);
+            if (blockedIds.has(id)) continue;
+            const hay = worldbookEntryStrings(e);
+            if (hay.some((s) => s.startsWith('TavernDB'))) continue;
+            const matched = hay.length && hay.some((s) => s.includes(n) || n.includes(s));
+            if (matched) { auto.push(e); continue; }
+            if (n.length >= 2 && String(e.content ?? '').slice(0, 300).includes(n)) auto.push(e);
+        }
+    }
+    for (const e of all) {
+        if (manualIds.has(worldbookIdOf(e))) manual.push(e);
+    }
+    return { all, auto, manual };
+}
+
+function linkedForPrompt(member) {
+    const st = memberWorldbookState(member);
+    const seen = new Set();
+    const out = [];
+    for (const e of [...st.auto, ...st.manual]) {
+        const id = worldbookIdOf(e);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        out.push(e);
+    }
+    return out;
+}
+
 function scanWorldbookForMember(name) {
     try {
-        const entries = world_info?.entries ?? [];
+        const entries = collectWorldbookEntries();
         const n = String(name ?? '');
         if (!n) return [];
-        const hits = entries.filter((e) => {
-            const entryName = String(e.name ?? '');
-            if (!entryName || entryName.startsWith('TavernDB')) return false;
-            if (entryName.includes(n) || n.includes(entryName)) return true;
-            const keys = [e.key, ...(Array.isArray(e.secondary_keys) ? e.secondary_keys : []), e.comment ?? '']
-                .filter((k) => typeof k === 'string' && k.length > 0);
-            return keys.some((k) => k.includes(n) || n.includes(k));
-        });
-        return hits.map((e) => ({ name: e.name, keys: [e.key, ...(Array.isArray(e.secondary_keys) ? e.secondary_keys : [])].filter(Boolean), content: String(e.content ?? '') }));
+        const nameKeyHits = [];
+        const contentHits = [];
+        for (const e of entries) {
+            const haystacks = worldbookEntryStrings(e);
+            if (haystacks.some((s) => s.startsWith('TavernDB'))) continue;
+            const matched = haystacks.length && haystacks.some((s) => s.includes(n) || n.includes(s));
+            if (matched) {
+                nameKeyHits.push(e);
+            } else {
+                // 兜底：条目正文开头提到该角色名（很多世界书条目以正文承载角色档案）
+                const head = String(e.content ?? '').slice(0, 300);
+                if (n.length >= 2 && head.includes(n)) contentHits.push(e);
+            }
+        }
+        const hits = nameKeyHits.length ? nameKeyHits : contentHits.slice(0, 4);
+        return hits.map((e) => ({
+            name: String(e.name ?? e.comment ?? e.uid ?? '').slice(0, 80),
+            keys: worldbookEntryStrings(e).slice(0, 6),
+            content: String(e.content ?? ''),
+        }));
     } catch (err) {
         console.warn('[玄枢] 世界书扫描失败', err);
         return [];
@@ -484,14 +606,15 @@ async function readChroniclesForMember(name) {
         .map((r) => ({ summary: String(r.summary ?? '').trim(), dialogue: String(r.key_dialogue ?? '').trim() }));
 }
 
-function buildWorldbookSection(name) {
-    const hits = scanWorldbookForMember(name);
+function buildWorldbookSection(member) {
+    const hits = linkedForPrompt(member);
     if (!hits.length) return '';
     let body = '【角色中枢·世界书档案（实时联动，随剧情更新）】\n';
-    for (const h of hits.slice(0, 8)) {
-        const content = h.content.slice(0, 1200);
+    for (const e of hits.slice(0, 8)) {
+        const content = String(e.content ?? '').slice(0, 1200);
         if (!content) continue;
-        body += '· 条目「' + h.name + '」（关键词：' + h.keys.join('、') + '）：\n' + content + '\n';
+        const keys = worldbookEntryStrings(e).slice(0, 3).join('、');
+        body += '· 条目「' + worldbookDisplayName(e) + '」' + (keys ? '（关键词：' + keys + '）' : '') + '：\n' + content + '\n';
     }
     return body.slice(0, 4000);
 }
@@ -522,11 +645,12 @@ async function buildChroniclesSection(name) {
     return body.slice(0, 800);
 }
 
-async function buildHubSection(name) {
+async function buildHubSection(member) {
+    const name = String(member?.name ?? '');
     const mode = settings.hubMode ?? 'full';
-    if (mode === 'off') return '';
+    if (mode === 'off' || !name) return '';
     const parts = [];
-    const wb = buildWorldbookSection(name);
+    const wb = buildWorldbookSection(member);
     if (wb) parts.push(wb);
     if (mode === 'hub' || mode === 'full') {
         const tb = buildTavernRowsSection(name);
@@ -544,7 +668,7 @@ async function buildMemberContext(member, opts = {}) {
     parts.push('你是' + member.name + '。');
     if (member.profile) parts.push('【角色档案】\n' + member.profile);
     if (settings.hubMode !== 'off' && member.linkHub) {
-        const hub = await buildHubSection(member.name);
+        const hub = await buildHubSection(member);
         if (hub) parts.push(hub);
     }
     parts.push('你正通过' + settings.deviceName + '加密通讯器与' + ownerName() + (opts.forLive ? '私密通讯' : '进行番外私聊（与主线剧情平行、互不影响）') + '。用第一人称直接输出你发出的讯息正文：像发短讯一样自然，可以撒娇、汇报、挑逗，禁止旁白、禁止动作描写标记、禁止输出除讯息正文以外的任何内容。');
@@ -959,9 +1083,14 @@ function inviteMember(name, profile = '', appearance = '') {
         toastr.info(trimmed + ' 已经在频道里了');
         return false;
     }
-    settings.members.push({ name: trimmed, profile: String(profile ?? '').trim(), appearance: Object.assign({ hair: '', eyes: '', body: '', bust: '', outfit: '', features: '', pose: '', other: '' }, appearance && typeof appearance === 'object' ? appearance : {}), heartbeat: true, linkHub: true, log: [] });
+    settings.members.push({ name: trimmed, profile: String(profile ?? '').trim(), appearance: Object.assign({ face: '', hair: '', eyes: '', body: '', bust: '', outfit: '', features: '', other: '' }, appearance && typeof appearance === 'object' ? appearance : {}), heartbeat: true, linkHub: true, log: [], worldLinks: [], worldBlocked: [] });
     if (!settings.currentTarget) settings.currentTarget = trimmed;
     toastr.success(trimmed + ' 的档案已建立，已加入' + settings.deviceName + '频道');
+    if (!String(profile ?? '').trim() && !getCharByName(trimmed)) {
+        setTimeout(() => {
+            toastr.info('提示：' + trimmed + ' 还没有档案文本也没有同名角色卡——她不知道自己是谁。点成员行「档案」补上角色档案（外貌/性格/背景），并在世界书里确保有以她名字命名的档案条目（色色灵感的角色档案写在世界书里，名字要对得上）');
+        }, 3000);
+    }
     save();
     syncTargetUI();
     refreshRosterUI();
@@ -1032,6 +1161,23 @@ function openProfileEditor(name) {
     const ed = $root.find('#xuanshu-profile-editor');
     ed.empty();
     ed.append($(`<div class="xuanshu-set-title">▍档案编辑 · ${escapeHtml(name)}</div>`));
+    // 身份自检
+    try {
+        const st = memberWorldbookState(member);
+        const tavern = buildTavernRowsSection(name);
+        const card = getCharByName(name);
+        const self = '角色档案：' + (String(member.profile ?? '').trim().length || '空 ✗')
+            + '　外貌 Tag：' + (Object.values(member?.appearance ?? {}).some((x) => String(x ?? '').trim()) ? '有' : '空')
+            + '　世界书关联：自动 ' + st.auto.length + '＋手动 ' + st.manual.length + (st.auto.length || st.manual.length ? '' : ' ✗')
+            + '　TavernDB：' + (tavern ? '有' : '无 ✗')
+            + '　同名角色卡：' + (card ? '有' : '无 ✗');
+        const note = document.createElement('div');
+        note.className = 'xuanshu-set-note xuanshu-selfcheck';
+        note.textContent = '身份自检：' + self + '。记忆=档案+外貌Tag+世界书条目（自动/手动）+TavernDB表(按姓名列)+同名角色卡。关联名单见下方，可下拉手动添加。';
+        ed.append($(note));
+    } catch (err) {
+        console.warn('[玄枢] 身份自检失败', err);
+    }
     let tagRows = '';
     for (const [key, label] of APPEARANCE_FIELDS) {
         tagRows += `<div class="xuanshu-set-row"><label>${label}</label><input id="xuanshu-pe-ap-${key}" type="text" /></div>`;
@@ -1043,6 +1189,9 @@ function openProfileEditor(name) {
         ${tagRows}
         <div class="xuanshu-set-row"><button id="xuanshu-pe-save" class="xuanshu-invite-btn">保存档案</button></div>`;
     ed.append($(html));
+    ed.append($(`<div class="xuanshu-set-title">▍世界书条目关联（自动命中的会列出；没关联上的可下拉手动添加）</div>
+        <div class="xuanshu-set-row"><select id="xuanshu-pe-wi-select"></select><button id="xuanshu-pe-wi-add" class="xuanshu-gal-btn">添加关联</button></div>
+        <div id="xuanshu-pe-wi-list"></div>`));
     const ta = document.getElementById('xuanshu-pe-profile');
     if (ta) ta.value = member.profile ?? '';
     for (const [key] of APPEARANCE_FIELDS) {
@@ -1060,6 +1209,103 @@ function openProfileEditor(name) {
         save();
         toastr.success(member.name + ' 的档案已保存');
     });
+    bindWorldLinksUI(name, member);
+}
+
+function renderWorldLinksUI(name) {
+    const member = getMember(name);
+    const holder = document.getElementById('xuanshu-pe-wi-list');
+    if (!member || !holder) return;
+    holder.innerHTML = '';
+    const st = memberWorldbookState(member);
+    const manualIds = new Set((member.worldLinks || []).map((l) => l.id));
+    const blockedIds = new Set((member.worldBlocked || []).map(String));
+    const autoIds = new Set(st.auto.map((e) => worldbookIdOf(e)));
+    // 下拉：全部条目中「未关联 + 未屏蔽 + 非 TavernDB」
+    const sel = document.getElementById('xuanshu-pe-wi-select');
+    if (sel) {
+        sel.innerHTML = '';
+        const opts = st.all.filter((e) => {
+            const id = worldbookIdOf(e);
+            if (worldbookEntryStrings(e).some((s) => s.startsWith('TavernDB'))) return false;
+            if (manualIds.has(id) || blockedIds.has(id) || autoIds.has(id)) return false;
+            return true;
+        });
+        if (!opts.length) {
+            sel.append(makeOption('（没有更多可关联条目）', ''));
+        } else {
+            for (const e of opts) {
+                const preview = String(e.content ?? '').replace(/\s+/g, ' ').slice(0, 22);
+                sel.append(makeOption(worldbookDisplayName(e) + (preview ? '　｜' + preview : ''), worldbookIdOf(e)));
+            }
+        }
+    }
+    const rows = [];
+    for (const e of st.auto) {
+        const id = worldbookIdOf(e);
+        rows.push({ id, name: worldbookDisplayName(e), src: manualIds.has(id) ? '自动+手动' : '自动', entry: e });
+    }
+    for (const e of st.manual) {
+        const id = worldbookIdOf(e);
+        if (!rows.some((r) => r.id === id)) rows.push({ id, name: worldbookDisplayName(e), src: '手动', entry: e });
+    }
+    if (!rows.length) {
+        const empty = document.createElement('div');
+        empty.className = 'xuanshu-set-note';
+        empty.textContent = '尚未关联任何世界书条目——自动匹配按条目的名字/关键词/正文开头找角色名；没匹配上的请在上方下拉手动添加。';
+        holder.appendChild(empty);
+        return;
+    }
+    for (const r of rows) {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'xuanshu-wi-row';
+        const srcEl = document.createElement('span');
+        srcEl.className = 'xuanshu-wi-src';
+        srcEl.textContent = r.src;
+        const nameEl = document.createElement('span');
+        nameEl.className = 'xuanshu-wi-name';
+        nameEl.textContent = r.name;
+        nameEl.title = String(r.entry?.content ?? '').slice(0, 300);
+        const previewEl = document.createElement('span');
+        previewEl.className = 'xuanshu-wi-preview';
+        previewEl.textContent = String(r.entry?.content ?? '').replace(/\s+/g, ' ').slice(0, 16);
+        const del = document.createElement('button');
+        del.className = 'xuanshu-gal-btn';
+        del.textContent = r.src.indexOf('手动') >= 0 ? '取消' : '屏蔽';
+        del.title = r.src.indexOf('手动') >= 0 ? '取消手动关联' : '自动命中了但不想用它？屏蔽掉';
+        del.addEventListener('click', () => {
+            if (r.src.indexOf('手动') >= 0) {
+                member.worldLinks = (member.worldLinks || []).filter((l) => l.id !== r.id);
+            } else {
+                if (!member.worldBlocked.includes(r.id)) member.worldBlocked.push(r.id);
+            }
+            save();
+            renderWorldLinksUI(name);
+        });
+        rowEl.append(srcEl, nameEl, previewEl, del);
+        holder.appendChild(rowEl);
+    }
+}
+
+function bindWorldLinksUI(name, member) {
+    $('#xuanshu-pe-wi-add').on('click', () => {
+        const sel = document.getElementById('xuanshu-pe-wi-select');
+        if (!sel || !sel.value) {
+            toastr.info('下拉里没有可添加的条目（都已关联或已屏蔽，可先取消/恢复）');
+            return;
+        }
+        const id = sel.value;
+        member.worldLinks = member.worldLinks || [];
+        if (!member.worldLinks.some((l) => l.id === id)) {
+            const found = collectWorldbookEntries().find((e) => worldbookIdOf(e) === id);
+            member.worldLinks.push({ id, name: found ? worldbookDisplayName(found) : id });
+        }
+        const bIdx = (member.worldBlocked || []).indexOf(id);
+        if (bIdx >= 0) member.worldBlocked.splice(bIdx, 1);
+        save();
+        renderWorldLinksUI(name);
+    });
+    renderWorldLinksUI(name);
 }
 
 /* ---------------- 图库面板（照搬色色灵感立绘功能整体） ---------------- */
@@ -1455,6 +1701,55 @@ function syncTargetUI() {
         sel.value = settings.members.some((m) => m.name === current) ? current : settings.members[0].name;
     }
     renderTargetPortrait();
+}
+
+/* ---------------- 头像方形裁剪（用户自定区域） ---------------- */
+
+// crop = { id, f(边长占原图宽的比例), cx/cy(方形中心占宽/高的比例), srcW, srcH }
+function cropStylePct(crop) {
+    const f = Number(crop?.f) || 1;
+    const cx = Number(crop?.cx) ?? 0.5;
+    const cy = Number(crop?.cy) ?? 0.5;
+    const srcW = Number(crop?.srcW) || 1;
+    const srcH = Number(crop?.srcH) || 1;
+    const hFrac = (f * srcW) / srcH; // 方形高占原图高的比例
+    const topEdgeFrac = Math.min(Math.max(cy - hFrac / 2, 0), 1 - hFrac);
+    const leftEdgeFrac = Math.min(Math.max(cx - f / 2, 0), 1 - f);
+    return {
+        wPct: (100 / f),
+        hPct: (100 / f) * (srcH / srcW),
+        leftPct: -leftEdgeFrac * (100 / f),
+        topPct: -topEdgeFrac * (100 / f) * (srcH / srcW),
+    };
+}
+
+function normalizeCrop(member, base) {
+    const srcW = Number(base?.srcW) || 1;
+    const srcH = Number(base?.srcH) || 1;
+    const maxF = Math.min(1, srcH / srcW);
+    let f = Math.min(Math.max(Number(base?.f) || 1, 0.05), maxF);
+    const hFrac = (f * srcW) / srcH;
+    const cx = Math.min(Math.max(Number(base?.cx) ?? 0.5, f / 2), 1 - f / 2);
+    const cy = Math.min(Math.max(Number(base?.cy) ?? 0.5, hFrac / 2), 1 - hFrac / 2);
+    return { id: base?.id ?? null, f, cx, cy, srcW, srcH };
+}
+
+function memberHasCrop(member) {
+    return !!(member?.avatarCrop && getGallery(member.name).some((x) => x.id === member.avatarCrop.id));
+}
+
+// 在方形容器里渲染裁剪头像；无裁剪则整图 cover
+function renderAvatarInto(holder, member, dataUrl) {
+    if (!holder) return;
+    const crop = member?.avatarCrop;
+    if (crop && crop.id && dataUrl) {
+        const s = cropStylePct(crop);
+        holder.innerHTML = `<img src="${dataUrl}" alt="" style="width:${s.wPct}%;height:auto;max-width:none;max-height:none;left:${s.leftPct}%;top:${s.topPct}%;position:absolute;object-fit:fill" title="点击查看立绘（头像为自截区域）" />`;
+    } else if (dataUrl) {
+        holder.innerHTML = `<img src="${dataUrl}" alt="" title="点击查看立绘（点通讯录「头像」可自截方形头像）" />`;
+    } else {
+        holder.innerHTML = '';
+    }
 }
 
 function viewCurrentPortrait(name, entryId = null) {

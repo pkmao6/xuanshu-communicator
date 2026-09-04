@@ -796,6 +796,52 @@
 .xuanshu-gen-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 #xuanshu-gen-tags { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 
+
+/* ---- v1.4.7：世界书关联列表 ---- */
+.xuanshu-selfcheck {
+    border: 1px dashed rgba(255, 209, 102, 0.45);
+    padding: 5px 8px;
+    border-radius: 6px;
+    color: #ffd166;
+    line-height: 1.5;
+}
+.xuanshu-wi-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    border-bottom: 1px dotted rgba(74, 246, 38, 0.18);
+    font-size: 12px;
+}
+.xuanshu-wi-src {
+    flex-shrink: 0;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: rgba(74, 246, 38, 0.15);
+    color: #4af626;
+}
+.xuanshu-wi-name {
+    flex: 1;
+    color: #9dff8a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: help;
+}
+#xuanshu-pe-wi-select {
+    flex: 1;
+    background: rgba(74, 246, 38, 0.06);
+    border: 1px solid rgba(74, 246, 38, 0.3);
+    border-radius: 4px;
+    color: #4af626;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 4px 6px;
+    outline: none;
+}
+#xuanshu-pe-wi-select option { background: #020a02; color: #4af626; }
+
 /* ---- 动画 ---- */
 @keyframes xuanshu-blink {
     0%, 55% { opacity: 1; }
