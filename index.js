@@ -7,7 +7,7 @@ import { findChar } from '../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 
 const EXT_ID = 'xuanshu';
-const VERSION = '1.6.2';
+const VERSION = '1.6.3';
 
 const DEFAULT_WORKFLOW = JSON.stringify({
     '3': { class_type: 'KSampler', inputs: { seed: '{{seed}}', steps: 25, cfg: 6.5, sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] } },
@@ -2456,7 +2456,7 @@ function syncTitles() {
     if (!$root) return;
     $root.find('.xuanshu-title').text(settings.deviceName);
     $('#xuanshu-launcher').attr('title', settings.deviceName + '通讯器');
-    $('.xuanshu-launcher-label').text(settings.deviceName);
+    $('.xuanshu-launcher-label').text(settings.deviceName + '·v' + VERSION);
 }
 
 function refreshChatStyle() {
@@ -2493,14 +2493,37 @@ function isNarrowViewport() {
     return window.innerWidth <= 560;
 }
 
+function positionMobileUI() {
+    if (!isNarrowViewport()) return;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const la = document.getElementById('xuanshu-launcher');
+    if (la) {
+        const r = la.getBoundingClientRect();
+        if (r.top < 0 || r.bottom > vh || r.left < 0 || r.right > vw) {
+            // ST 手机端 body 为 fixed 时 bottom 锚点失效，改 top 定位兜底
+            la.style.top = Math.max(6, vh - r.height - 92 - 34) + 'px';
+            la.style.bottom = 'auto';
+            la.style.right = '12px';
+        }
+    }
+    if ($root && settings.ui.open && $root.is(':visible')) {
+        const rect = $root[0].getBoundingClientRect();
+        if (rect.top < 0 || rect.bottom > vh || rect.left < 0 || rect.right > vw) {
+            $root.css({ top: Math.max(6, vh - rect.height - 12) + 'px', bottom: 'auto', left: 'auto', right: '6px' });
+        }
+    }
+}
+
 function clampPosition() {
     if (!$root) return;
     if (isNarrowViewport()) {
-        // 手机端：清掉桌面端遗留的 inline left/top，交给 CSS 右下吸边 + 安全区定位
+        // 手机端：清掉桌面端遗留的 inline 坐标，改为顶部锚定（ST 手机端 body 为 fixed 时 bottom 锚点失效）
         const st = $root[0].style;
         if (st.left || st.top || st.right || st.bottom) {
             st.left = st.top = st.right = st.bottom = '';
         }
+        positionMobileUI();
         return;
     }
     const rect = $root[0].getBoundingClientRect();
@@ -3084,6 +3107,7 @@ function setupViewportGuard() {
     window.addEventListener('resize', () => {
         if (guardTimer) clearTimeout(guardTimer);
         guardTimer = setTimeout(() => {
+            positionMobileUI();
             if (settings.ui.open && $root && $root.is(':visible')) {
                 clampPosition();
                 if (settings.ui.x != null) save();
@@ -3099,6 +3123,7 @@ function init() {
         $root.hide();
         $('#xuanshu-launcher').css('display', '').show();
     }
+    positionMobileUI();
     refreshChatStyle();
     setupHeartbeat();
     setupViewportGuard();

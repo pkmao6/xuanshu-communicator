@@ -596,7 +596,12 @@
 /* ---- 灯箱（照搬色色灵感交互：三槽滑动 + 点图/空白/ESC 关闭 + 左右翻页） ---- */
 #xuanshu-lightbox {
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    width: 100dvw;
+    height: 100vh;
+    height: 100dvh;
     z-index: 40000;
     background: rgba(0, 0, 0, 0.88);
     align-items: center;
@@ -939,8 +944,9 @@
     .xuanshu-launcher {
         right: 12px;
         right: calc(12px + env(safe-area-inset-right, 0px));
-        bottom: 92px;
-        bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+        top: calc(100vh - 138px);
+        top: calc(100dvh - 138px - env(safe-area-inset-bottom, 0px));
+        bottom: auto;
         width: auto;
         height: 46px;
         padding: 0 16px;
