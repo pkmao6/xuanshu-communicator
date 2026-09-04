@@ -2,7 +2,7 @@ import { extension_settings } from '../../../extensions.js';
 import { saveSettingsDebounced, eventSource, event_types, generateQuietPrompt, generateRaw, characters, name1 } from '../../../../script.js';
 import { getContext } from '../../../st-context.js';
 import { registerSlashCommand, sendMessageAs } from '../../../slash-commands.js';
-import { world_info } from '../../../world-info.js';
+import { world_info, world_names, loadWorldInfo } from '../../../world-info.js';
 import { findChar } from '../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 
@@ -395,6 +395,20 @@ function collectWorldbookEntries() {
             if (!v.uid) { try { v.uid = k; } catch { /* 忽略 */ } }
             out.push(v);
         }
+        // 当前角色卡的内嵌世界书（character_book）
+        try {
+            const chid = getContext().characterId;
+            const card = characters?.[chid];
+            const book = card?.data?.character_book;
+            const bookEntries = Array.isArray(book?.entries) ? book.entries : Object.values(book?.entries ?? {});
+            for (let i = 0; i < bookEntries.length; i++) {
+                const e = bookEntries[i];
+                if (!e || typeof e !== 'object') continue;
+                if (!('content' in e)) continue;
+                const k = Array.isArray(e.keys) ? e.keys[0] : (e.key ?? '');
+                out.push({ name: e.name ?? String(e.comment ?? k ?? ''), key: e.keys ?? e.key, secondary_keys: e.secondary_keys ?? [], comment: e.comment ?? '', uid: e.uid ?? ('book-' + i), content: e.content });
+            }
+        } catch { /* 忽略 */ }
         // 角色卡内嵌世界书（charLore 数组中每项可能带 entries/extraBooks 内的条目）
         try {
             const cl = src.charLore;
@@ -472,6 +486,12 @@ function memberWorldbookState(member) {
     }
     for (const e of all) {
         if (manualIds.has(worldbookIdOf(e))) manual.push(e);
+    }
+    // 手动关联但条目已不在当前世界书（如来自其他世界书）：用存储快照兜底
+    for (const l of member?.worldLinks ?? []) {
+        if (!manualIds.has(l?.id)) continue;
+        if (manual.some((e) => worldbookIdOf(e) === l.id)) continue;
+        manual.push({ uid: l.id, name: l.name ?? String(l.id), key: '', secondary_keys: [], comment: '', content: l.content ?? '' });
     }
     return { all, auto, manual };
 }
@@ -1165,6 +1185,7 @@ function openProfileEditor(name) {
     if (!$root || !member) return;
     const ed = $root.find('#xuanshu-profile-editor');
     ed.empty();
+    wiExtraCandidates = [];
     ed.append($(`<div class="xuanshu-set-title">▍档案编辑 · ${escapeHtml(name)}</div>`));
     // 身份自检
     try {
@@ -1196,6 +1217,7 @@ function openProfileEditor(name) {
     ed.append($(html));
     ed.append($(`<div class="xuanshu-set-title">▍世界书条目关联（自动命中的会列出；没关联上的可下拉手动添加）</div>
         <div class="xuanshu-set-row"><select id="xuanshu-pe-wi-select"></select><button id="xuanshu-pe-wi-add" class="xuanshu-gal-btn">添加关联</button></div>
+        <div class="xuanshu-set-row"><label>其他世界书</label><select id="xuanshu-pe-wi-world"></select><button id="xuanshu-pe-wi-load" class="xuanshu-gal-btn" title="当前世界书为空时，从其他世界书文件读取条目作为候选">载入候选</button></div>
         <div id="xuanshu-pe-wi-count"></div>
         <div id="xuanshu-pe-wi-list"></div>`));
     const ta = document.getElementById('xuanshu-pe-profile');
@@ -1234,12 +1256,13 @@ function renderWorldLinksUI(name) {
     countNote.className = 'xuanshu-set-note';
     if (sel) {
         sel.innerHTML = '';
-        const opts = st.all.filter((e) => {
+        const base = st.all.concat(wiExtraCandidates ?? []);
+        const opts = base.filter((e) => {
             const id = worldbookIdOf(e);
             if (worldbookEntryStrings(e).some((s) => s.startsWith('TavernDB'))) return false;
             return !manualIds.has(id);
         });
-        countNote.textContent = '世界书共读取 ' + st.all.length + ' 条｜已关联 ' + (autoIds.size + manualIds.size) + ' 条';
+        countNote.textContent = '当前世界书 ' + st.all.length + ' 条' + ((wiExtraCandidates ?? []).length ? '＋外部候选 ' + wiExtraCandidates.length + ' 条' : '') + '｜已关联 ' + (autoIds.size + manualIds.size) + ' 条';
         if (!st.all.length) {
             sel.append(makeOption('（当前世界书为空）', ''));
             countNote.textContent = '未能从世界书读取到任何条目（共 0 条）——请确认当前聊天已挂载世界书；角色档案在哪个世界书/角色卡里，就把那个挂到当前聊天后再刷新。';
@@ -1311,13 +1334,56 @@ function bindWorldLinksUI(name, member) {
         const id = sel.value;
         member.worldLinks = member.worldLinks || [];
         if (!member.worldLinks.some((l) => l.id === id)) {
-            const found = collectWorldbookEntries().find((e) => worldbookIdOf(e) === id);
-            member.worldLinks.push({ id, name: found ? worldbookDisplayName(found) : id });
+            const pool = collectWorldbookEntries().concat(wiExtraCandidates ?? []);
+            const found = pool.find((e) => worldbookIdOf(e) === id);
+            member.worldLinks.push({ id, name: found ? worldbookDisplayName(found) : id, content: found ? String(found.content ?? '').slice(0, 1200) : '' });
         }
         const bIdx = (member.worldBlocked || []).indexOf(id);
         if (bIdx >= 0) member.worldBlocked.splice(bIdx, 1);
         save();
         renderWorldLinksUI(name);
+    });
+    // 其他世界书载入
+    const worldSel = document.getElementById('xuanshu-pe-wi-world');
+    if (worldSel) {
+        worldSel.innerHTML = '';
+        const names = Array.isArray(world_names) ? world_names : [];
+        if (!names.length) {
+            worldSel.append(makeOption('（没有其他世界书文件）', ''));
+        } else {
+            for (const wn of names) worldSel.append(makeOption(wn, wn));
+        }
+    }
+    $('#xuanshu-pe-wi-load').on('click', async () => {
+        const worldSel2 = document.getElementById('xuanshu-pe-wi-world');
+        if (!worldSel2 || !worldSel2.value) {
+            toastr.info('没有可载入的世界书文件');
+            return;
+        }
+        try {
+            const data = await loadWorldInfo(worldSel2.value);
+            const entries = Array.isArray(data?.entries) ? data.entries : Object.values(data?.entries ?? {});
+            let added = 0;
+            for (let i = 0; i < entries.length; i++) {
+                const en = entries[i];
+                if (!en || typeof en !== 'object' || !('content' in en)) continue;
+                const k = Array.isArray(en.keys) ? en.keys[0] : (en.key ?? '');
+                wiExtraCandidates.push({
+                    name: en.name ?? String(en.comment ?? k ?? ('条目' + (i + 1))),
+                    key: en.keys ?? en.key,
+                    secondary_keys: en.secondary_keys ?? [],
+                    comment: en.comment ?? '',
+                    uid: 'wb-' + worldSel2.value + '-' + i,
+                    content: en.content,
+                });
+                added++;
+            }
+            toastr.success('已载入 ' + added + ' 条候选，可在上方下拉选择添加关联');
+            renderWorldLinksUI(name);
+        } catch (err) {
+            console.warn('[玄枢] 载入其他世界书失败', err);
+            toastr.error('载入失败：' + (err?.message ?? err));
+        }
     });
     renderWorldLinksUI(name);
 }
@@ -1773,6 +1839,7 @@ function renderAvatarInto(holder, member, dataUrl) {
 }
 
 let cropState = null;
+let wiExtraCandidates = [];
 
 function refreshAvatarSurfaces() {
     syncTargetUI();
@@ -1865,13 +1932,15 @@ function drawCropOverlay() {
     img.style.width = iw + 'px';
     img.style.height = ih + 'px';
     const fw = crop.f * iw; // 方框宽（像素）
-    const fh = (crop.f * crop.srcW) / crop.srcH * ih; // 方形对应显示高度
     const x0 = (crop.cx - crop.f / 2) * iw;
     const y0 = (crop.cy * crop.srcH - (crop.f * crop.srcW) / 2) / crop.srcH * ih;
+    // 图片在面板内居中显示的偏移量（方框是相对面板定位的）
+    const l0 = (paneW - iw) / 2;
+    const t0 = (paneH - ih) / 2;
     square.style.width = fw + 'px';
     square.style.height = fw + 'px';
-    square.style.left = Math.max(0, x0) + 'px';
-    square.style.top = Math.max(0, y0) + 'px';
+    square.style.left = Math.max(0, l0 + x0) + 'px';
+    square.style.top = Math.max(0, t0 + y0) + 'px';
     square.style.display = 'block';
     // 实时小预览：背景图按比例裁出
     const pv = document.getElementById('xuanshu-crop-preview');
