@@ -352,6 +352,8 @@ function setPortraitImage(name, id) {
 }
 
 function removeGalleryImage(name, id) {
+    const m = getMember(name);
+    if (m?.avatarCrop?.id === id) { delete m.avatarCrop; save(); }
     const g = getGallery(name).filter((x) => x.id !== id);
     if (g.length && !g.some((x) => x.isPortrait)) g[g.length - 1].isPortrait = true;
     saveGallery(name, g);
@@ -1126,6 +1128,7 @@ function refreshRosterUI() {
             <span class="xuanshu-member-portrait xuanshu-member-portrait-empty">?</span>
             <span class="xuanshu-member-name">${escapeHtml(m.name)}</span>
             <button class="xuanshu-member-edit" title="编辑档案">档案</button>
+            <button class="xuanshu-member-avatar" title="自截方形头像">头像</button>
             <button class="xuanshu-member-gallery" title="图库与立绘">立绘</button>
             <label class="xuanshu-member-hb" title="参与心跳待机"><input type="checkbox" class="xuanshu-member-heartbeat" ${m.heartbeat ? 'checked' : ''} /> 心跳</label>
             <label class="xuanshu-member-hb" title="回复时实时联动角色中枢"><input type="checkbox" class="xuanshu-member-link" ${m.linkHub ? 'checked' : ''} /> 中枢</label>
@@ -1146,11 +1149,12 @@ function refreshRosterUI() {
             refreshRosterUI();
         });
         row.find('.xuanshu-member-edit').on('click', () => openProfileEditor(m.name));
+        row.find('.xuanshu-member-avatar').on('click', () => openAvatarCrop(m.name));
         row.find('.xuanshu-member-gallery').on('click', () => openGallery(m.name));
         listEl.append(row);
         const thumbHolder = row.find('.xuanshu-member-portrait').first();
         loadEntryData(getPortraitEntry(m.name)).then((url) => {
-            if (url && row.is(':visible')) thumbHolder.replaceWith(`<img class="xuanshu-member-portrait" src="${url}" alt="" />`);
+            if (row.is(':visible')) renderAvatarInto(thumbHolder[0], m, url);
         });
     }
 }
@@ -1391,6 +1395,7 @@ function renderGallery() {
             <img alt="" loading="lazy">
             <span class="xuanshu-gal-check">${inBatch ? '✓' : ''}</span>
             <div class="xuanshu-gal-actions">
+                <span data-act="avatar" title="用这张截取方形头像">✂</span>
                 <span data-act="pick" title="设为立绘">★</span>
                 <span data-act="random" title="${img.inRandom ? '移出随机池' : '加入随机池'}">⚄</span>
                 <span data-act="edit" title="编辑标签">✎</span>
@@ -1406,6 +1411,10 @@ function renderGallery() {
                 return;
             }
             const act = $(e.target).closest('[data-act]').data('act');
+            if (act === 'avatar') {
+                openAvatarCrop(galleryMember, img.id);
+                return;
+            }
             if (act === 'pick') {
                 setPortraitImage(galleryMember, img.id);
                 renderGallery();
@@ -1752,6 +1761,125 @@ function renderAvatarInto(holder, member, dataUrl) {
     }
 }
 
+let cropState = null;
+
+function refreshAvatarSurfaces() {
+    syncTargetUI();
+    if ($root) refreshRosterUI();
+    if (galleryMember) renderGallery();
+}
+
+function closeCrop() {
+    cropState = null;
+    $('#xuanshu-crop').hide();
+}
+
+function openAvatarCrop(name, entryId = null) {
+    const member = getMember(name);
+    if (!$root || !member) return;
+    const g = getGallery(name);
+    if (!g.length) {
+        toastr.info('图库是空的——先去「立绘」生成或上传一张，才能截头像');
+        return;
+    }
+    cropState = { name, id: null, srcW: 1, srcH: 1, f: 0.5, cx: 0.5, cy: 0.5, ready: false };
+    $root.find('.xuanshu-settings-pop').hide();
+    $('#xuanshu-crop').show();
+    $('#xuanshu-crop-title').text('截取方形头像 · ' + name);
+    $('#xuanshu-crop-status').text('');
+    const sel = document.getElementById('xuanshu-crop-select');
+    sel.innerHTML = '';
+    g.forEach((img, i) => {
+        sel.append(makeOption('#' + (i + 1) + (img.isPortrait ? '（立绘）' : '') + (img.id === member.avatarCrop?.id ? '（当前头像）' : ''), img.id));
+    });
+    if (entryId && g.some((x) => x.id === entryId)) sel.value = entryId;
+    else if (member.avatarCrop && g.some((x) => x.id === member.avatarCrop.id)) sel.value = member.avatarCrop.id;
+    loadCropImage();
+}
+
+function loadCropImage() {
+    if (!cropState) return;
+    const name = cropState.name;
+    const g = getGallery(name);
+    const sel = document.getElementById('xuanshu-crop-select');
+    const entry = g.find((x) => x.id === sel.value) ?? g[0];
+    if (!entry) return;
+    cropState.id = entry.id;
+    const prev = getMember(name)?.avatarCrop;
+    cropState.cx = (prev && prev.id === entry.id) ? prev.cx : 0.5;
+    cropState.cy = (prev && prev.id === entry.id) ? prev.cy : 0.5;
+    cropState.f = (prev && prev.id === entry.id) ? prev.f : 0.5;
+    const img = document.getElementById('xuanshu-crop-img');
+    const square = document.getElementById('xuanshu-crop-square');
+    loadEntryData(entry).then((url) => {
+        if (!cropState || cropState.name !== name || cropState.id !== entry.id) return;
+        if (url) {
+            // 解析自然尺寸（jsdom/离线时拿不到就按 3:4 估算，仅影响方框换算比例）
+            const probe = new Image();
+            let done = false;
+            const fin = (w, h) => {
+                if (done) return;
+                done = true;
+                if (!cropState || cropState.id !== entry.id) return;
+                cropState.srcW = w || 1024;
+                cropState.srcH = h || 1536;
+                cropState.ready = true;
+                img.src = url;
+                drawCropOverlay();
+            };
+            probe.onload = () => fin(probe.naturalWidth, probe.naturalHeight);
+            probe.onerror = () => fin(0, 0);
+            setTimeout(() => fin(probe.naturalWidth || 0, probe.naturalHeight || 0), 250);
+            probe.src = url;
+        }
+    });
+}
+
+function drawCropOverlay() {
+    if (!cropState || !cropState.ready) return;
+    const member = getMember(cropState.name);
+    const crop = normalizeCrop(member, { id: cropState.id, f: cropState.f, cx: cropState.cx, cy: cropState.cy, srcW: cropState.srcW, srcH: cropState.srcH });
+    cropState.f = crop.f;
+    cropState.cx = crop.cx;
+    cropState.cy = crop.cy;
+    const img = document.getElementById('xuanshu-crop-img');
+    const pane = document.getElementById('xuanshu-crop-pane');
+    const square = document.getElementById('xuanshu-crop-square');
+    if (!img || !pane || !square) return;
+    const paneW = pane.clientWidth || 360;
+    const paneH = pane.clientHeight || 420;
+    const scale = Math.min(paneW / crop.srcW, paneH / crop.srcH);
+    const iw = crop.srcW * scale;
+    const ih = crop.srcH * scale;
+    img.style.width = iw + 'px';
+    img.style.height = ih + 'px';
+    const fw = crop.f * iw; // 方框宽（像素）
+    const fh = (crop.f * crop.srcW) / crop.srcH * ih; // 方形对应显示高度
+    const x0 = (crop.cx - crop.f / 2) * iw;
+    const y0 = (crop.cy * crop.srcH - (crop.f * crop.srcW) / 2) / crop.srcH * ih;
+    square.style.width = fw + 'px';
+    square.style.height = fw + 'px';
+    square.style.left = Math.max(0, x0) + 'px';
+    square.style.top = Math.max(0, y0) + 'px';
+    square.style.display = 'block';
+    // 实时小预览：背景图按比例裁出
+    const pv = document.getElementById('xuanshu-crop-preview');
+    if (pv && img.src) {
+        pv.style.backgroundImage = 'url(' + img.src + ')';
+        const ratio = 64 / fw;
+        pv.style.backgroundSize = (iw * ratio) + 'px auto';
+        pv.style.backgroundPosition = (-x0 * ratio) + 'px ' + (-y0 * ratio) + 'px';
+    }
+    const sx = document.getElementById('xuanshu-crop-size');
+    const ix = document.getElementById('xuanshu-crop-x');
+    const iy = document.getElementById('xuanshu-crop-y');
+    const maxF = Math.min(1, crop.srcH / crop.srcW);
+    if (sx) sx.max = Math.round(maxF * 100);
+    if (sx && document.activeElement !== sx) sx.value = Math.round(crop.f / maxF * 100);
+    if (ix) ix.value = Math.round(crop.cx * 100);
+    if (iy) iy.value = Math.round(crop.cy * 100);
+}
+
 function viewCurrentPortrait(name, entryId = null) {
     const member = getMember(name);
     if (!$root || !member) return;
@@ -1771,8 +1899,8 @@ function renderTargetPortrait() {
     holder.innerHTML = '';
     if (!member) return;
     loadEntryData(getPortraitEntry(member.name)).then((url) => {
-        if (url && document.getElementById('xuanshu-target-portrait') === holder) {
-            holder.innerHTML = `<img src="${url}" alt="" title="点击查看当前立绘（可翻看整本图库）" />`;
+        if (document.getElementById('xuanshu-target-portrait') === holder) {
+            renderAvatarInto(holder, member, url);
         }
     });
 }
@@ -2193,6 +2321,27 @@ function ensureUI() {
             <button class="xuanshu-invite-btn" id="xuanshu-tag-cancel">取消</button>
           </div>
         </div>
+        <div id="xuanshu-crop" class="xuanshu-settings-pop" style="display:none">
+          <div class="xuanshu-gal-head">
+            <span class="xuanshu-set-title" id="xuanshu-crop-title">截取方形头像</span>
+            <button class="xuanshu-btn xuanshu-crop-close" title="关闭">×</button>
+          </div>
+          <div class="xuanshu-set-row"><label>图片</label><select id="xuanshu-crop-select"></select></div>
+          <div class="xuanshu-crop-pane" id="xuanshu-crop-pane">
+            <img id="xuanshu-crop-img" alt="" />
+            <div class="xuanshu-crop-square" id="xuanshu-crop-square"></div>
+          </div>
+          <div class="xuanshu-crop-hint">拖动绿色方框调整位置；方框内即头像区域</div>
+          <div class="xuanshu-set-row"><label>取景大小</label><input id="xuanshu-crop-size" type="range" min="10" max="100" step="1" value="40" /></div>
+          <div class="xuanshu-set-row"><label>中心 X%</label><input id="xuanshu-crop-x" type="number" min="0" max="100" step="1" /><label>中心 Y%</label><input id="xuanshu-crop-y" type="number" min="0" max="100" step="1" /></div>
+          <div class="xuanshu-crop-live"><span class="xuanshu-set-note">头像预览</span><div class="xuanshu-crop-previewbox" id="xuanshu-crop-preview"></div></div>
+          <div class="xuanshu-gen-btns">
+            <button class="xuanshu-invite-btn" id="xuanshu-crop-save">设为头像</button>
+            <button class="xuanshu-invite-btn" id="xuanshu-crop-clear">清除头像</button>
+            <button class="xuanshu-invite-btn" id="xuanshu-crop-cancel">取消</button>
+          </div>
+          <div id="xuanshu-crop-status" class="xuanshu-set-note"></div>
+        </div>
       </div>
     </div>
     <div id="xuanshu-lightbox" style="display:none"></div>`;
@@ -2471,6 +2620,88 @@ function bindEvents() {
         $('#xuanshu-gallery').show();
         renderGallery();
     });
+    // 头像裁剪
+    $root.find('.xuanshu-crop-close').on('click', () => closeCrop());
+    $('#xuanshu-crop-select').on('change', () => loadCropImage());
+    $('#xuanshu-crop-size').on('input', function () {
+        if (!cropState?.ready) return;
+        const maxF = Math.min(1, cropState.srcH / cropState.srcW);
+        cropState.f = Math.max(0.05, (Number(this.value) || 40) / 100 * maxF);
+        drawCropOverlay();
+    });
+    $('#xuanshu-crop-x').on('input', function () {
+        if (!cropState?.ready) return;
+        cropState.cx = Math.min(Math.max((Number(this.value) || 0) / 100, 0), 1);
+        drawCropOverlay();
+    });
+    $('#xuanshu-crop-y').on('input', function () {
+        if (!cropState?.ready) return;
+        cropState.cy = Math.min(Math.max((Number(this.value) || 0) / 100, 0), 1);
+        drawCropOverlay();
+    });
+    $('#xuanshu-crop-save').on('click', () => {
+        if (!cropState?.ready) {
+            toastr.info('图片还没准备好，稍等片刻');
+            return;
+        }
+        const member = getMember(cropState.name);
+        if (!member) return;
+        member.avatarCrop = normalizeCrop(member, { id: cropState.id, f: cropState.f, cx: cropState.cx, cy: cropState.cy, srcW: cropState.srcW, srcH: cropState.srcH });
+        save();
+        closeCrop();
+        refreshAvatarSurfaces();
+        toastr.success(member.name + ' 的方形头像已设定');
+    });
+    $('#xuanshu-crop-clear').on('click', () => {
+        if (!cropState) return;
+        const member = getMember(cropState.name);
+        if (member) {
+            delete member.avatarCrop;
+            save();
+            refreshAvatarSurfaces();
+            toastr.success('已清除自定义头像，恢复整图显示');
+        }
+        closeCrop();
+    });
+    $('#xuanshu-crop-cancel').on('click', () => closeCrop());
+    {
+        let dragging = false;
+        let startX = 0, startY = 0, startCx = 0, startCy = 0;
+        $('#xuanshu-crop-pane').on('pointerdown', (e) => {
+            if (!cropState?.ready) return;
+            if (!e.target.closest('#xuanshu-crop-square')) return;
+            e.preventDefault();
+            dragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            startCx = cropState.cx;
+            startCy = cropState.cy;
+        });
+        $(document).on('pointermove', (e) => {
+            if (!dragging || !cropState?.ready) return;
+            const img = document.getElementById('xuanshu-crop-img');
+            const pane = document.getElementById('xuanshu-crop-pane');
+            if (!img || !pane) return;
+            const rect = img.getBoundingClientRect();
+            let iw = rect.width;
+            let ih = rect.height;
+            let left = rect.left;
+            let top = rect.top;
+            if (!iw || !ih) {
+                const pw = pane.clientWidth || 360;
+                const ph = pane.clientHeight || 420;
+                const scale = Math.min(pw / cropState.srcW, ph / cropState.srcH);
+                iw = cropState.srcW * scale;
+                ih = cropState.srcH * scale;
+                left = (pw - iw) / 2;
+                top = (ph - ih) / 2;
+            }
+            cropState.cx = Math.min(Math.max(startCx + (e.clientX - startX) / iw, 0), 1);
+            cropState.cy = Math.min(Math.max(startCy + (e.clientY - startY) / ih, 0), 1);
+            drawCropOverlay();
+        });
+        $(document).on('pointerup', () => { dragging = false; });
+    }
     // 灯箱
     $('#xuanshu-lightbox').on('click', '.xuanshu-lb-prev', () => flipLightbox(-1));
     $('#xuanshu-lightbox').on('click', '.xuanshu-lb-next', () => flipLightbox(1));
