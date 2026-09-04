@@ -27,12 +27,13 @@ const defaultSettings = {
         workflow: DEFAULT_WORKFLOW,
         width: 512, height: 768, seed: -1,
         layers: {
+            qualityPrefix: 'masterpiece, best quality',
             composition: 'solo, full body, looking at viewer',
             expression: 'alluring gaze, smirk',
-            appearanceDefault: 'long crimson hair, red eyes, heart in eye, stunning beauty, makeup, tall, athletic, long legs, strong, narrow waist, monster girl, (gigantic breasts:1.2), curvy',
-            outfit: 'black micro bikini, covered puffy nipples, areolas slip, bodystocking, black stiletto heels',
+            outfitDefault: 'black micro bikini, covered puffy nipples, areolas slip, bodystocking, black stiletto heels',
             pose: 'contrapposto, hand on hip',
             lighting: 'soft lighting, rim light, cinematic lighting, moonlight',
+            suffix: '',
         },
         negative: 'lowres, bad anatomy, bad hands, extra fingers, blurry, jpeg artifacts, watermark, text',
     },
@@ -40,6 +41,7 @@ const defaultSettings = {
     autoReplyLive: true,
     heartbeatOn: false,
     heartbeatMin: 30,
+    genPref: { preset: 'default', theme: 'default', size: 'default', extraPrompt: '' },
     deviceLog: [],
     members: [],
     currentTarget: '',
@@ -54,6 +56,7 @@ for (const [key, value] of Object.entries(defaultSettings)) {
 settings.ui = Object.assign(structuredClone(defaultSettings.ui), settings.ui ?? {});
 settings.api = Object.assign(structuredClone(defaultSettings.api), settings.api ?? {});
 settings.comfy = Object.assign(structuredClone(defaultSettings.comfy), settings.comfy ?? {});
+settings.genPref = Object.assign(structuredClone(defaultSettings.genPref), settings.genPref ?? {});
 
 // v1.0/v1.1 -> 迁移
 if (Array.isArray(settings.sideLog)) {
@@ -83,10 +86,19 @@ for (const k of ['checkpoint', 'steps', 'cfg', 'sampler', 'scheduler', 'positive
 }
 if (!settings.comfy.workflow) settings.comfy.workflow = DEFAULT_WORKFLOW;
 settings.comfy.layers = Object.assign(structuredClone(defaultSettings.comfy.layers), settings.comfy.layers ?? {});
+delete settings.comfy.layers.appearanceDefault;
+if (settings.comfy.layers.outfit !== undefined) {
+    settings.comfy.layers.outfitDefault = settings.comfy.layers.outfitDefault ?? settings.comfy.layers.outfit;
+    delete settings.comfy.layers.outfit;
+}
 if (!settings.comfy.negative) settings.comfy.negative = defaultSettings.comfy.negative;
 for (const m of settings.members) {
     m.profile = m.profile ?? m.personaExtra ?? '';
-    m.appearance = m.appearance ?? '';
+    if (typeof m.appearance === 'string') {
+        m.appearance = m.appearance.trim() ? { other: m.appearance } : {};
+    }
+    m.appearance = Object.assign({ face: '', hair: '', eyes: '', body: '', bust: '', outfit: '', features: '', other: '' }, m.appearance ?? {});
+    delete m.appearance.pose;
     m.heartbeat = m.heartbeat ?? true;
     m.linkHub = m.linkHub ?? true;
     m.log = Array.isArray(m.log) ? m.log : [];
@@ -101,6 +113,12 @@ let heartbeatTimer = null;
 let $root = null;
 let galleryMember = null;
 let lbState = null;
+let genState = { preset: 'default', theme: 'default', size: 'default' };
+let tagEditId = null;
+let galleryBatchMode = null;
+let galleryBatchSet = new Set();
+let galleryFilterEmotion = 'all';
+let galleryFilterNsfw = 'all';
 
 const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const escapeRegExp = (s) => String(s ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -186,16 +204,28 @@ function getPortrait(name) {
             saveGallery(name, g);
         }
     } catch { /* 忽略 */ }
+    const pool = g.filter((x) => x.inRandom);
+    if (pool.length >= 2) {
+        return pool[Math.floor(Math.random() * pool.length)].dataUrl;
+    }
     const p = g.find((x) => x.isPortrait) ?? g[0];
     return p?.dataUrl ?? '';
 }
 
 function addGalleryImage(name, { dataUrl, prompt, negative }) {
     const g = getGallery(name);
-    const entry = { id: 'img-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), dataUrl, prompt: prompt ?? '', negative: negative ?? '', createdAt: Date.now(), isPortrait: g.length === 0 };
+    const entry = { id: 'img-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), dataUrl, prompt: prompt ?? '', negative: negative ?? '', emotion: '', nsfw: undefined, createdAt: Date.now(), isPortrait: g.length === 0, inRandom: false };
     g.push(entry);
     saveGallery(name, g);
     return entry;
+}
+
+function updateGalleryImage(name, id, patch) {
+    const g = getGallery(name);
+    const e = g.find((x) => x.id === id);
+    if (!e) return;
+    Object.assign(e, patch);
+    saveGallery(name, g);
 }
 
 function setPortraitImage(name, id) {
@@ -445,13 +475,93 @@ async function aiChat(messages) {
 
 /* ---------------- 分层提示词组装（正负词固定模板） ---------------- */
 
-function assemblePrompt(member) {
+const APPEARANCE_FIELDS = [
+    ['face', '面部特征'],
+    ['hair', '发型发色'],
+    ['eyes', '眼睛特征'],
+    ['body', '体型身材'],
+    ['bust', '胸臀特征'],
+    ['outfit', '服装/饰品'],
+    ['features', '特征/纹身'],
+    ['other', '其他'],
+];
+
+// 按单个 tag 拆分并规范化（照搬色色灵感规则）
+function splitTags(text, opts = {}) {
+    return String(text ?? '')
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .map((t) => {
+            // 表情/神态类标签禁止加权：剥离 (tag:1.2) 形式的权重
+            if (opts.stripWeights) {
+                const m = t.match(/^\((.+?):\d+(?:\.\d+)?\)$/);
+                if (m) return m[1];
+            }
+            return t;
+        });
+}
+
+const GEN_PRESETS = {
+    default: null,                                  // 用模板构图层
+    avatar: 'portrait, face focus, close-up',
+    halfbody: 'upper body',
+    fullbody: 'full body',
+};
+
+const GEN_THEMES = {
+    default: '',
+    cinematic: 'dynamic angle, action, motion blur',
+    allure: 'seductive pose, alluring charm, bedroom eyes',
+    nsfw: 'nsfw, nude, explicit',
+    emotion: 'close-up, detailed face, emotional expression',
+    fashion: 'fashion show, full body, outfit focus',
+};
+
+function assemblePrompt(member, opts = {}) {
     const L = settings.comfy?.layers ?? {};
-    const appear = String(member?.appearance ?? '').trim() || String(L.appearanceDefault ?? '').trim();
-    const parts = [L.composition, L.expression, appear, L.outfit, L.pose, L.lighting]
-        .map((s) => String(s ?? '').trim())
-        .filter(Boolean);
-    return parts.join(', ');
+    const a = member?.appearance ?? {};
+    const outfit = String(a.outfit ?? '').trim() || String(L.outfitDefault ?? '').trim();
+    const composition = GEN_PRESETS[opts.preset] ?? GEN_PRESETS.default ?? L.composition;
+    const themeTags = splitTags(GEN_THEMES[opts.theme] ?? '');
+    const extra = splitTags(opts.extraPrompt ?? '');
+    const sections = [
+        splitTags(L.qualityPrefix),                                  // 质量词固定前缀
+        splitTags(composition ?? ''),                                // 构图（可被预设覆盖）
+        splitTags(L.expression, { stripWeights: true }),             // 表情/神态（禁止加权）
+        splitTags(a.face),
+        splitTags(a.hair),
+        splitTags(a.eyes),
+        splitTags(a.body),                                           // 体型（保留括号权重）
+        splitTags(a.bust),
+        splitTags(outfit),
+        splitTags(a.features),
+        splitTags(a.other),
+        splitTags(L.pose),
+        splitTags(L.lighting),
+        themeTags,                                                   // 主题
+        extra,                                                       // 本次额外提示词
+        splitTags(L.suffix),                                         // 固定后缀
+    ];
+    // 按单个 tag 去重（不区分大小写，保留首次出现顺序）
+    const seen = new Set();
+    const deduped = [];
+    for (const tag of sections.flat()) {
+        const key = tag.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(tag);
+    }
+    return deduped.join(', ');
+}
+
+function genSizeFor(sizeKey) {
+    const w = Number(settings.comfy.width) || 512;
+    const h = Number(settings.comfy.height) || 768;
+    if (sizeKey === 'portrait') return { width: Math.min(w, h), height: Math.max(w, h) };
+    if (sizeKey === 'landscape') return { width: Math.max(w, h), height: Math.min(w, h) };
+    if (sizeKey === 'square') { const s = Math.max(w, h); return { width: s, height: s }; }
+    return { width: w, height: h };
 }
 
 function fixedNegative() {
@@ -460,7 +570,7 @@ function fixedNegative() {
 
 /* ---------------- ComfyUI：主人自己的工作流 ---------------- */
 
-function buildComfyWorkflow(prompt, negative) {
+function buildComfyWorkflow(prompt, negative, size = null) {
     const raw = String(settings.comfy?.workflow ?? '').trim();
     if (!raw) throw new Error('请先在设置里粘贴 ComfyUI 工作流 JSON');
     let json;
@@ -470,8 +580,9 @@ function buildComfyWorkflow(prompt, negative) {
         throw new Error('ComfyUI 工作流 JSON 解析失败：' + err.message);
     }
     const seed = Number(settings.comfy.seed) >= 0 ? Number(settings.comfy.seed) : Math.floor(Math.random() * 1e12);
-    const widthNum = Number(settings.comfy.width) || 512;
-    const heightNum = Number(settings.comfy.height) || 768;
+    const sz = size ?? { width: Number(settings.comfy.width) || 512, height: Number(settings.comfy.height) || 768 };
+    const widthNum = Number(sz.width) || 512;
+    const heightNum = Number(sz.height) || 768;
     const typed = {
         '{{prompt}}': String(prompt ?? ''),
         '{{negative}}': String(negative ?? ''),
@@ -498,11 +609,11 @@ function buildComfyWorkflow(prompt, negative) {
     return replace(json);
 }
 
-async function generateImage(name, prompt, negative) {
+async function generateImage(name, prompt, negative, size = null) {
     const c = settings.comfy;
     const base = String(c.baseUrl || '').replace(/\/+$/, '');
     if (!base) throw new Error('请先在设置里填写 ComfyUI 地址');
-    const wf = buildComfyWorkflow(prompt, negative);
+    const wf = buildComfyWorkflow(prompt, negative, size);
     const resp = await fetch(base + '/prompt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -544,11 +655,12 @@ function inviteMember(name, profile = '', appearance = '') {
         toastr.info(trimmed + ' 已经在频道里了');
         return false;
     }
-    settings.members.push({ name: trimmed, profile: String(profile ?? '').trim(), appearance: String(appearance ?? '').trim(), heartbeat: true, linkHub: true, log: [] });
+    settings.members.push({ name: trimmed, profile: String(profile ?? '').trim(), appearance: Object.assign({ hair: '', eyes: '', body: '', bust: '', outfit: '', features: '', pose: '', other: '' }, appearance && typeof appearance === 'object' ? appearance : {}), heartbeat: true, linkHub: true, log: [] });
     if (!settings.currentTarget) settings.currentTarget = trimmed;
     toastr.success(trimmed + ' 的档案已建立，已加入' + settings.deviceName + '频道');
     save();
     syncTargetUI();
+    refreshRosterUI();
     renderLog();
     return true;
 }
@@ -563,6 +675,7 @@ function kickMember(name) {
     removeGalleryAll(name);
     save();
     syncTargetUI();
+    refreshRosterUI();
     renderLog();
     return true;
 }
@@ -615,65 +728,133 @@ function openProfileEditor(name) {
     const html = `
         <div class="xuanshu-set-row"><label>名字</label><input id="xuanshu-pe-name" type="text" value="${escapeHtml(name)}" disabled /></div>
         <div class="xuanshu-set-row"><label>档案文本</label><textarea id="xuanshu-pe-profile" rows="6" placeholder="外观、性格、与机主的关系、背景……回复时作为依据"></textarea></div>
-        <div class="xuanshu-set-row"><label>外貌提示词</label><textarea id="xuanshu-pe-appearance" rows="2" placeholder="立绘外貌标签：发色、瞳色、体型……留空则用默认外貌层"></textarea></div>
+        <div class="xuanshu-set-title">▍外貌 Tag 档案（本角色专属，立绘组装时取这里）</div>
+        <div class="xuanshu-set-row"><label>发色/发型</label><input id="xuanshu-pe-ap-hair" type="text" /></div>
+        <div class="xuanshu-set-row"><label>瞳色</label><input id="xuanshu-pe-ap-eyes" type="text" /></div>
+        <div class="xuanshu-set-row"><label>体型/身材</label><input id="xuanshu-pe-ap-body" type="text" /></div>
+        <div class="xuanshu-set-row"><label>胸臀特征</label><input id="xuanshu-pe-ap-bust" type="text" /></div>
+        <div class="xuanshu-set-row"><label>服装/饰品</label><input id="xuanshu-pe-ap-outfit" type="text" /></div>
+        <div class="xuanshu-set-row"><label>特征/纹身</label><input id="xuanshu-pe-ap-features" type="text" /></div>
+        <div class="xuanshu-set-row"><label>姿势/神态</label><input id="xuanshu-pe-ap-pose" type="text" /></div>
+        <div class="xuanshu-set-row"><label>其他</label><input id="xuanshu-pe-ap-other" type="text" /></div>
         <div class="xuanshu-set-row"><button id="xuanshu-pe-save" class="xuanshu-invite-btn">保存档案</button></div>`;
     ed.append($(html));
     const ta = document.getElementById('xuanshu-pe-profile');
     if (ta) ta.value = member.profile ?? '';
-    const ap = document.getElementById('xuanshu-pe-appearance');
-    if (ap) ap.value = member.appearance ?? '';
+    for (const [key] of APPEARANCE_FIELDS) {
+        const el = document.getElementById('xuanshu-pe-ap-' + key);
+        if (el) el.value = member.appearance?.[key] ?? '';
+    }
     $('#xuanshu-pe-save').on('click', () => {
         const v = String(document.getElementById('xuanshu-pe-profile')?.value ?? '').trim();
-        const a = String(document.getElementById('xuanshu-pe-appearance')?.value ?? '').trim();
         member.profile = v;
-        member.appearance = a;
+        member.appearance = member.appearance ?? {};
+        for (const [key] of APPEARANCE_FIELDS) {
+            const el = document.getElementById('xuanshu-pe-ap-' + key);
+            member.appearance[key] = String(el?.value ?? '').trim();
+        }
         save();
         toastr.success(member.name + ' 的档案已保存');
     });
 }
 
-/* ---------------- 图库面板 + 灯箱（照搬色色灵感交互） ---------------- */
+/* ---------------- 图库面板（照搬色色灵感立绘功能整体） ---------------- */
+
+function galleryEmotions() {
+    const g = getGallery(galleryMember ?? '');
+    const set = new Set();
+    for (const x of g) {
+        const e = String(x.emotion ?? '').trim();
+        if (e) set.add(e);
+    }
+    return [...set];
+}
 
 function openGallery(name) {
     const member = getMember(name);
     if (!$root || !member) return;
     galleryMember = name;
+    galleryBatchMode = null;
+    galleryBatchSet = new Set();
+    galleryFilterEmotion = 'all';
+    galleryFilterNsfw = 'all';
     $root.find('.xuanshu-settings-pop').hide();
-    const g = getGallery(name);
-    const draft = getDraft(name);
     $('#xuanshu-gallery').show();
     $('#xuanshu-gallery-title').text('图库 · ' + name);
-    $('#xuanshu-gal-prompt').val(draft.prompt || (g.length ? g[g.length - 1].prompt : '') || assemblePrompt(member));
-    $('#xuanshu-gal-neg').val(draft.negative || (g.length ? g[g.length - 1].negative : '') || fixedNegative());
-    $('#xuanshu-gal-status').text('');
     renderGallery();
 }
 
 function closeGallery() {
     galleryMember = null;
     $('#xuanshu-gallery').hide();
+    $('#xuanshu-generator').hide();
+    $('#xuanshu-tag-edit').hide();
     closeLightbox();
+}
+
+function refreshGalleryBanner() {
+    if (!galleryMember) return;
+    const pool = getGallery(galleryMember).filter((x) => x.inRandom);
+    $('#xuanshu-gal-random-banner').text(pool.length >= 2 ? ('⚄ 随机立绘已开启：每次刷新从 ' + pool.length + ' 张中随机展示') : '');
 }
 
 function renderGallery() {
     if (!galleryMember) return;
     const g = getGallery(galleryMember);
+    const emo = document.getElementById('xuanshu-gal-filter-emotion');
+    if (emo) {
+        emo.innerHTML = '';
+        emo.append(makeOption('全部', 'all'));
+        for (const e of galleryEmotions()) emo.append(makeOption(e, e));
+        emo.append(makeOption('其他（未标注）', 'untagged'));
+        emo.value = galleryFilterEmotion;
+    }
+    const visible = g.filter((x) => {
+        if (galleryFilterEmotion === 'untagged') {
+            if (String(x.emotion ?? '').trim()) return false;
+        } else if (galleryFilterEmotion !== 'all' && x.emotion !== galleryFilterEmotion) {
+            return false;
+        }
+        if (galleryFilterNsfw === 'daily' && x.nsfw !== false) return false;
+        if (galleryFilterNsfw === 'nsfw' && x.nsfw !== true) return false;
+        if (galleryFilterNsfw === 'untagged' && x.nsfw !== undefined) return false;
+        return true;
+    });
     const grid = $('#xuanshu-gal-grid');
     grid.empty();
     if (!g.length) {
-        grid.append($('<div class="xuanshu-set-note">图库为空——下方写好提示词点「生成立绘」，或上传本地图片</div>'));
+        grid.append($('<div class="xuanshu-set-note">还没有立绘，点右上「生成新立绘」开始</div>'));
+    } else if (!visible.length) {
+        grid.append($('<div class="xuanshu-set-note">没有符合筛选条件的立绘</div>'));
     }
-    for (const img of g) {
-        const item = $(`<div class="xuanshu-gal-item ${img.isPortrait ? 'is-portrait' : ''}" data-id="${img.id}" title="${escapeHtml(img.prompt).slice(0, 150)}">
+    for (const img of visible) {
+        const date = new Date(img.createdAt);
+        const dateStr = (date.getMonth() + 1) + '/' + date.getDate() + ' ' + String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0');
+        const emoTag = img.emotion
+            ? '<span class="xuanshu-gal-tag xuanshu-gal-tag-emotion">' + escapeHtml(img.emotion) + '</span>'
+            : '<span class="xuanshu-gal-tag xuanshu-gal-tag-muted">未标注</span>';
+        const nsfwTag = img.nsfw === undefined ? '' : img.nsfw
+            ? '<span class="xuanshu-gal-tag xuanshu-gal-tag-nsfw">瑟瑟</span>'
+            : '<span class="xuanshu-gal-tag xuanshu-gal-tag-daily">日常</span>';
+        const inBatch = galleryBatchMode && galleryBatchSet.has(img.id);
+        const item = $(`<div class="xuanshu-gal-item${img.isPortrait ? ' is-portrait' : ''}${img.inRandom ? ' in-random' : ''}${inBatch ? ' batch-selected' : ''}" data-id="${img.id}" title="${escapeHtml(img.prompt).slice(0, 150)}">
             <img src="${img.dataUrl}" alt="" loading="lazy">
-            <span class="xuanshu-gal-badge">${img.isPortrait ? '立绘' : ''}</span>
+            <span class="xuanshu-gal-check">${inBatch ? '✓' : ''}</span>
             <div class="xuanshu-gal-actions">
                 <span data-act="pick" title="设为立绘">★</span>
-                <span data-act="edit" title="编辑提示词">✎</span>
-                <span data-act="del" title="删除">✕</span>
+                <span data-act="random" title="${img.inRandom ? '移出随机池' : '加入随机池'}">⚄</span>
+                <span data-act="edit" title="编辑标签">✎</span>
+                <span data-act="del" title="删除">×</span>
             </div>
+            <div class="xuanshu-gal-meta">${emoTag}${nsfwTag}<span class="xuanshu-gal-date">${dateStr}</span></div>
         </div>`);
         item.on('click', function (e) {
+            if (galleryBatchMode) {
+                if (galleryBatchSet.has(img.id)) galleryBatchSet.delete(img.id);
+                else galleryBatchSet.add(img.id);
+                renderGallery();
+                return;
+            }
             const act = $(e.target).closest('[data-act]').data('act');
             if (act === 'pick') {
                 setPortraitImage(galleryMember, img.id);
@@ -682,10 +863,13 @@ function renderGallery() {
                 refreshRosterUI();
                 return;
             }
+            if (act === 'random') {
+                updateGalleryImage(galleryMember, img.id, { inRandom: !img.inRandom });
+                renderGallery();
+                return;
+            }
             if (act === 'edit') {
-                $('#xuanshu-gal-prompt').val(img.prompt ?? '');
-                $('#xuanshu-gal-neg').val(img.negative ?? '');
-                $('#xuanshu-gal-status').text('已载入该图提示词——修改后点「生成立绘」生成新图');
+                openTagEdit(img.id);
                 return;
             }
             if (act === 'del') {
@@ -698,6 +882,170 @@ function renderGallery() {
             openLightbox(galleryMember, img.id);
         });
         grid.append(item);
+    }
+    const bar = document.getElementById('xuanshu-gal-batch-bar');
+    if (bar) {
+        bar.style.display = galleryBatchMode ? '' : 'none';
+        const cnt = document.getElementById('xuanshu-gal-batch-count');
+        if (cnt) cnt.textContent = '已选 ' + galleryBatchSet.size + ' 张';
+    }
+    refreshGalleryBanner();
+}
+
+function startBatch(mode) {
+    if (!galleryMember || !getGallery(galleryMember).length) return;
+    galleryBatchMode = mode;
+    galleryBatchSet = new Set();
+    renderGallery();
+}
+
+async function execBatch() {
+    if (!galleryBatchMode || !galleryBatchSet.size) return;
+    const name = galleryMember;
+    if (galleryBatchMode === 'delete') {
+        const ok = await callGenericPopup('删除选中的 ' + galleryBatchSet.size + ' 张立绘？', POPUP_TYPE.CONFIRM);
+        if (!ok) return;
+        const rest = getGallery(name).filter((x) => !galleryBatchSet.has(x.id));
+        if (rest.length && !rest.some((x) => x.isPortrait)) rest[rest.length - 1].isPortrait = true;
+        saveGallery(name, rest);
+        toastr.success('已删除 ' + galleryBatchSet.size + ' 张');
+    } else {
+        let n = 0;
+        for (const img of getGallery(name).filter((x) => galleryBatchSet.has(x.id))) {
+            const a = document.createElement('a');
+            a.href = img.dataUrl;
+            a.download = 'xuanshu-' + name + '-' + Date.now() + '-' + (n++) + '.png';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        }
+        toastr.success('已导出 ' + galleryBatchSet.size + ' 张');
+    }
+    galleryBatchMode = null;
+    galleryBatchSet = new Set();
+    renderGallery();
+    syncTargetUI();
+    refreshRosterUI();
+}
+
+/* ---------------- 标签编辑 ---------------- */
+
+function openTagEdit(id) {
+    const img = getGallery(galleryMember ?? '').find((x) => x.id === id);
+    if (!img) return;
+    tagEditId = id;
+    $('#xuanshu-gallery').hide();
+    $('#xuanshu-tag-edit').show();
+    const emo = document.getElementById('xuanshu-tag-emotion');
+    const nsfw = document.getElementById('xuanshu-tag-nsfw');
+    if (emo) {
+        if (img.emotion && ![...emo.options].some((o) => o.value === img.emotion)) emo.append(makeOption(img.emotion, img.emotion));
+        emo.value = img.emotion || '';
+    }
+    if (nsfw) nsfw.value = img.nsfw === true ? 'nsfw' : img.nsfw === false ? 'daily' : 'untagged';
+    const tp = document.getElementById('xuanshu-tag-prompt');
+    if (tp) tp.value = img.prompt ?? '';
+}
+
+/* ---------------- 生成表单（照搬色色灵感生成立绘整体） ---------------- */
+
+function openGenerator(name) {
+    const member = getMember(name);
+    if (!$root || !member) return;
+    galleryMember = name;
+    $('#xuanshu-gallery').hide();
+    $('#xuanshu-tag-edit').hide();
+    $('#xuanshu-generator').show();
+    $('#xuanshu-generator-title').text('为「' + name + '」生成立绘');
+    const pref = settings.genPref ?? {};
+    genState = { preset: pref.preset || 'default', theme: pref.theme || 'default', size: pref.size || 'default' };
+    renderGeneratorPresets();
+    const extra = document.getElementById('xuanshu-gen-extra');
+    if (extra) extra.value = pref.extraPrompt ?? '';
+    renderGeneratorTags(member);
+    refreshGenPrompt(true);
+}
+
+function renderGeneratorPresets() {
+    const mark = (id, attr, key) => {
+        const row = document.getElementById(id);
+        if (!row) return;
+        row.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset[attr] === genState[key]));
+    };
+    mark('xuanshu-gen-presets', 'preset', 'preset');
+    mark('xuanshu-gen-themes', 'theme', 'theme');
+    mark('xuanshu-gen-sizes', 'size', 'size');
+}
+
+function renderGeneratorTags(member) {
+    const holder = document.getElementById('xuanshu-gen-tags');
+    if (!holder) return;
+    holder.innerHTML = '';
+    for (const [key, label] of APPEARANCE_FIELDS) {
+        const row = document.createElement('div');
+        row.className = 'xuanshu-set-row';
+        row.innerHTML = '<label>' + label + '</label><input id="xuanshu-gen-ap-' + key + '" type="text" />';
+        holder.appendChild(row);
+        const inp = document.getElementById('xuanshu-gen-ap-' + key);
+        if (inp) inp.value = member.appearance?.[key] ?? '';
+    }
+}
+
+function collectGenTags() {
+    const member = getMember(galleryMember ?? '');
+    if (!member) return;
+    member.appearance = member.appearance ?? {};
+    for (const [key] of APPEARANCE_FIELDS) {
+        const inp = document.getElementById('xuanshu-gen-ap-' + key);
+        if (inp) member.appearance[key] = String(inp.value ?? '').trim();
+    }
+}
+
+function currentGenOptions() {
+    return {
+        preset: genState.preset,
+        theme: genState.theme,
+        size: genState.size,
+        extraPrompt: String(document.getElementById('xuanshu-gen-extra')?.value ?? '').trim(),
+    };
+}
+
+function refreshGenPrompt(useDraft = false) {
+    const member = getMember(galleryMember ?? '');
+    if (!member) return;
+    const draft = getDraft(galleryMember);
+    if (useDraft && draft.prompt) {
+        $('#xuanshu-gen-prompt').val(draft.prompt);
+    } else {
+        $('#xuanshu-gen-prompt').val(assemblePrompt(member, currentGenOptions()));
+    }
+    $('#xuanshu-gen-neg').val(useDraft && draft.negative ? draft.negative : fixedNegative());
+}
+
+async function runGen() {
+    if (!galleryMember) return;
+    const prompt = String($('#xuanshu-gen-prompt').val() ?? '').trim();
+    if (!prompt) {
+        toastr.info('生图内容为空');
+        return;
+    }
+    const negative = String($('#xuanshu-gen-neg').val() ?? '').trim();
+    const size = genSizeFor(genState.size);
+    const status = $('#xuanshu-gen-status');
+    status.text('▌正在生成……（约 10 秒到数分钟，请保持页面开启）');
+    try {
+        const dataUrl = await generateImage(galleryMember, prompt, negative, size);
+        const entry = addGalleryImage(galleryMember, { dataUrl, prompt, negative });
+        saveDraft(galleryMember, prompt, negative);
+        renderGallery();
+        syncTargetUI();
+        refreshRosterUI();
+        status.text('生成完毕 ✓');
+        openLightbox(galleryMember, entry.id);
+    } catch (err) {
+        console.error('[玄枢] 立绘生成失败', err);
+        status.text('生成失败：' + (err?.message ?? err));
+        toastr.error('立绘生成失败：' + (err?.message ?? err));
     }
 }
 
@@ -717,7 +1065,8 @@ function openLightbox(name, id) {
         <div class="xuanshu-lb-counter" id="xuanshu-lb-counter"></div>
         <div class="xuanshu-lb-actions">
             <button class="xuanshu-lb-star" title="设为立绘">★ 设为立绘</button>
-            <button class="xuanshu-lb-edit" title="把提示词载入图库编辑区">✎ 编辑提示词</button>
+            <button class="xuanshu-lb-regen" title="把生图内容载入生成表单">↻ 重新生图</button>
+            <button class="xuanshu-lb-edit" title="编辑标签">✎ 标签</button>
             <button class="xuanshu-lb-del" title="删除这张">✕ 删除</button>
             <button class="xuanshu-lb-close">关闭</button>
         </div>`));
@@ -1073,8 +1422,8 @@ function ensureUI() {
           <div class="xuanshu-set-title">▍通讯录（故事角色档案）</div>
           <div class="xuanshu-set-row"><label>角色名</label><input id="xuanshu-new-name" type="text" placeholder="故事里的角色名字" /></div>
           <div class="xuanshu-set-row"><label>角色档案</label><textarea id="xuanshu-new-profile" rows="4" placeholder="外观、性格、与机主的关系、背景……"></textarea></div>
-          <div class="xuanshu-set-row"><label>外貌提示词</label><textarea id="xuanshu-new-appearance" rows="2" placeholder="立绘外貌标签：发色、瞳色、体型……留空则用默认外貌层"></textarea></div>
           <div class="xuanshu-set-row"><button id="xuanshu-invite-btn" class="xuanshu-invite-btn">建立档案并加入频道</button></div>
+          <div class="xuanshu-set-note">每个角色有独立的外貌 tag 档案（发色/瞳色/体型……）——建好档案后点成员行的「档案」按钮编辑。</div>
           <div id="xuanshu-members-list"></div>
           <div id="xuanshu-profile-editor"></div>
           <div class="xuanshu-set-title">▍模型（OpenAI 兼容接口，全部频道通用）</div>
@@ -1093,12 +1442,11 @@ function ensureUI() {
           <div class="xuanshu-set-title">▍立绘提示词模板（固定分层，自动组装）</div>
           <div class="xuanshu-set-row"><label>构图层</label><input id="xuanshu-set-l-composition" type="text" /></div>
           <div class="xuanshu-set-row"><label>表情层</label><input id="xuanshu-set-l-expression" type="text" /></div>
-          <div class="xuanshu-set-row"><label>默认外貌层</label><textarea id="xuanshu-set-l-appearance" rows="2"></textarea></div>
           <div class="xuanshu-set-row"><label>服装层</label><input id="xuanshu-set-l-outfit" type="text" /></div>
           <div class="xuanshu-set-row"><label>姿势层</label><input id="xuanshu-set-l-pose" type="text" /></div>
           <div class="xuanshu-set-row"><label>光影层</label><input id="xuanshu-set-l-lighting" type="text" /></div>
           <div class="xuanshu-set-row"><label>负面提示词</label><textarea id="xuanshu-set-neg" rows="2"></textarea></div>
-          <div class="xuanshu-set-note">组装顺序：构图 → 表情 → 角色外貌（成员「外貌提示词」，留空用默认外貌层） → 服装 → 姿势 → 光影。图库面板里的提示词会自动按此组装，可微调。</div>
+          <div class="xuanshu-set-note">组装顺序：构图 → 表情 → 角色外貌（每个角色自己的外貌 Tag 档案，在成员「档案」里编辑） → 服装 → 姿势 → 光影。图库面板里的提示词会自动按此组装，可微调。</div>
           <div class="xuanshu-set-title">▍行为</div>
           <div class="xuanshu-set-row"><label>中枢联动</label><select id="xuanshu-set-hubmode">
             <option value="off">关闭</option>
@@ -1113,17 +1461,88 @@ function ensureUI() {
           <div class="xuanshu-set-note">修改后即时生效，记录自动保存。API 密钥仅保存在本地设置中。</div>
         </div>
         <div id="xuanshu-gallery" class="xuanshu-settings-pop" style="display:none">
-          <div class="xuanshu-gal-head"><span class="xuanshu-set-title" id="xuanshu-gallery-title">图库</span><button class="xuanshu-btn xuanshu-gal-close" title="关闭">×</button></div>
-          <div id="xuanshu-gal-grid"></div>
-          <div class="xuanshu-set-title">▍生成 / 重生成</div>
-          <div class="xuanshu-set-row"><label>提示词</label><textarea id="xuanshu-gal-prompt" rows="4" placeholder="按固定分层模板自动组装：构图 → 表情 → 角色外貌 → 服装 → 姿势 → 光影"></textarea></div>
-          <div class="xuanshu-set-row"><label>负向词</label><textarea id="xuanshu-gal-neg" rows="2" placeholder="固定负向词（设置里配置）"></textarea></div>
-          <div class="xuanshu-set-row">
-            <button id="xuanshu-gal-gen" class="xuanshu-invite-btn">生成立绘</button>
-            <button id="xuanshu-gal-reassemble" class="xuanshu-invite-btn" title="按固定分层模板重新组装提示词">重装模板</button>
-            <label class="xuanshu-invite-btn xuanshu-upload-label">上传图片<input id="xuanshu-gal-upload" type="file" accept="image/*" multiple style="display:none" /></label>
+          <div class="xuanshu-gal-head">
+            <span class="xuanshu-set-title" id="xuanshu-gallery-title">图库</span>
+            <button class="xuanshu-gal-btn" id="xuanshu-gal-batch-del" title="勾选多张后执行删除">批量删除</button>
+            <button class="xuanshu-gal-btn" id="xuanshu-gal-batch-export" title="勾选多张后执行导出">批量导出</button>
+            <button class="xuanshu-gal-btn xuanshu-gal-primary" id="xuanshu-gal-gen-open">生成新立绘</button>
+            <button class="xuanshu-gal-btn" id="xuanshu-gal-import-btn">导入本地图片</button>
+            <input type="file" id="xuanshu-gal-upload" accept="image/*" multiple style="display:none" />
+            <button class="xuanshu-btn xuanshu-gal-close" title="关闭">×</button>
           </div>
-          <div id="xuanshu-gal-status" class="xuanshu-set-note"></div>
+          <div class="xuanshu-gal-hint">点 ★ 设为立绘；点 ⚄ 加入随机池（≥2 张后每次刷新随机展示）</div>
+          <div class="xuanshu-gal-random-banner" id="xuanshu-gal-random-banner"></div>
+          <div class="xuanshu-gal-filters">
+            <label>情绪 <select id="xuanshu-gal-filter-emotion"></select></label>
+            <label>场景 <select id="xuanshu-gal-filter-nsfw">
+              <option value="all">全部</option>
+              <option value="daily">日常</option>
+              <option value="nsfw">瑟瑟</option>
+              <option value="untagged">未标注</option>
+            </select></label>
+          </div>
+          <div id="xuanshu-gal-grid"></div>
+          <div class="xuanshu-gal-batch-toolbar" id="xuanshu-gal-batch-bar" style="display:none">
+            <span id="xuanshu-gal-batch-count">已选 0 张</span>
+            <button class="xuanshu-gal-btn" id="xuanshu-gal-batch-all">全选可见</button>
+            <button class="xuanshu-gal-btn" id="xuanshu-gal-batch-clear">清空</button>
+            <span style="flex:1"></span>
+            <button class="xuanshu-gal-btn xuanshu-gal-danger" id="xuanshu-gal-batch-exec">执行</button>
+            <button class="xuanshu-gal-btn" id="xuanshu-gal-batch-cancel">取消</button>
+          </div>
+        </div>
+        <div id="xuanshu-generator" class="xuanshu-settings-pop" style="display:none">
+          <div class="xuanshu-gal-head">
+            <span class="xuanshu-set-title" id="xuanshu-generator-title">生成立绘</span>
+            <button class="xuanshu-btn xuanshu-generator-close" title="关闭">×</button>
+          </div>
+          <div class="xuanshu-set-title">▍构图预设</div>
+          <div class="xuanshu-gen-preset-row" id="xuanshu-gen-presets">
+            <button data-preset="default">默认</button><button data-preset="avatar">头像</button><button data-preset="halfbody">半身像</button><button data-preset="fullbody">全身像</button>
+          </div>
+          <div class="xuanshu-set-title">▍主题</div>
+          <div class="xuanshu-gen-preset-row" id="xuanshu-gen-themes">
+            <button data-theme="default">立绘</button><button data-theme="cinematic">精彩瞬间</button><button data-theme="allure">角色魅力</button><button data-theme="nsfw">NSFW情节</button><button data-theme="emotion">情绪特写</button><button data-theme="fashion">服装展示</button>
+          </div>
+          <div class="xuanshu-set-title">▍尺寸</div>
+          <div class="xuanshu-gen-preset-row" id="xuanshu-gen-sizes">
+            <button data-size="default">默认</button><button data-size="portrait">竖版</button><button data-size="landscape">横版</button><button data-size="square">方形</button>
+          </div>
+          <div class="xuanshu-set-title">▍本次额外提示词（可选）</div>
+          <div class="xuanshu-set-row"><textarea id="xuanshu-gen-extra" rows="2" placeholder="例如：手持折扇，背景樱花，微笑"></textarea></div>
+          <div class="xuanshu-set-title">▍人物 Tag（外貌/身材一致性锚点） <button class="xuanshu-gal-btn" id="xuanshu-gen-tag-edit">编辑 Tag</button></div>
+          <div id="xuanshu-gen-tags" style="display:none"></div>
+          <div class="xuanshu-set-title">▍生图内容（可编辑；点「重新生图」直接使用此处内容）</div>
+          <div class="xuanshu-set-row"><textarea id="xuanshu-gen-prompt" rows="4" spellcheck="false"></textarea></div>
+          <div class="xuanshu-set-title">▍负面提示词</div>
+          <div class="xuanshu-set-row"><textarea id="xuanshu-gen-neg" rows="2" spellcheck="false"></textarea></div>
+          <div class="xuanshu-gen-btns">
+            <button class="xuanshu-invite-btn" id="xuanshu-gen-start">开始生成</button>
+            <button class="xuanshu-invite-btn" id="xuanshu-gen-regen">重新生图</button>
+            <button class="xuanshu-invite-btn" id="xuanshu-gen-save-pref">保存为偏好</button>
+            <button class="xuanshu-invite-btn" id="xuanshu-gen-cancel">取消</button>
+          </div>
+          <div id="xuanshu-gen-status" class="xuanshu-set-note"></div>
+        </div>
+        <div id="xuanshu-tag-edit" class="xuanshu-settings-pop" style="display:none">
+          <div class="xuanshu-gal-head">
+            <span class="xuanshu-set-title">编辑标签</span>
+            <button class="xuanshu-btn xuanshu-tag-edit-close" title="关闭">×</button>
+          </div>
+          <div class="xuanshu-set-row"><label>情绪</label><select id="xuanshu-tag-emotion">
+            <option value="">未标注</option>
+            <option>开心</option><option>害羞</option><option>诱惑</option><option>得意</option><option>惊讶</option><option>委屈</option><option>慵懒</option><option>兴奋</option>
+          </select></div>
+          <div class="xuanshu-set-row"><label>场景</label><select id="xuanshu-tag-nsfw">
+            <option value="untagged">未标注</option>
+            <option value="daily">日常</option>
+            <option value="nsfw">瑟瑟</option>
+          </select></div>
+          <div class="xuanshu-set-row"><label>提示词</label><textarea id="xuanshu-tag-prompt" rows="3"></textarea></div>
+          <div class="xuanshu-gen-btns">
+            <button class="xuanshu-invite-btn" id="xuanshu-tag-save">保存</button>
+            <button class="xuanshu-invite-btn" id="xuanshu-tag-cancel">取消</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1242,15 +1661,13 @@ function bindEvents() {
     $('#xuanshu-invite-btn').on('click', () => {
         const name = String(document.getElementById('xuanshu-new-name')?.value ?? '').trim();
         const profile = String(document.getElementById('xuanshu-new-profile')?.value ?? '').trim();
-        const appearance = String(document.getElementById('xuanshu-new-appearance')?.value ?? '').trim();
         if (!name) {
             toastr.info('请先填写故事角色的名字');
             return;
         }
-        inviteMember(name, profile, appearance);
+        inviteMember(name, profile);
         if (document.getElementById('xuanshu-new-name')) document.getElementById('xuanshu-new-name').value = '';
         if (document.getElementById('xuanshu-new-profile')) document.getElementById('xuanshu-new-profile').value = '';
-        if (document.getElementById('xuanshu-new-appearance')) document.getElementById('xuanshu-new-appearance').value = '';
         refreshRosterUI();
     });
     $root.find('.xuanshu-tab').on('click', function () {
@@ -1284,40 +1701,9 @@ function bindEvents() {
         }
     });
     $('#xuanshu-send').on('click', () => doSend());
-    // 图库面板
+    // 图库面板（照搬色色灵感立绘功能整体）
     $root.find('.xuanshu-gal-close').on('click', () => closeGallery());
-    $('#xuanshu-gal-reassemble').on('click', () => {
-        if (!galleryMember) return;
-        const member = getMember(galleryMember);
-        $('#xuanshu-gal-prompt').val(assemblePrompt(member));
-        $('#xuanshu-gal-neg').val(fixedNegative());
-        $('#xuanshu-gal-status').text('已按固定分层模板重新组装');
-    });
-    $('#xuanshu-gal-gen').on('click', async () => {
-        if (!galleryMember) return;
-        const prompt = String($('#xuanshu-gal-prompt').val() ?? '').trim();
-        if (!prompt) {
-            toastr.info('请先写提示词——生成时原样使用，不做任何自动拼接');
-            return;
-        }
-        const negative = String($('#xuanshu-gal-neg').val() ?? '').trim();
-        const status = $('#xuanshu-gal-status');
-        status.text('▌正在生成……（约 1-5 分钟，请保持页面开启）');
-        try {
-            const dataUrl = await generateImage(galleryMember, prompt, negative);
-            const entry = addGalleryImage(galleryMember, { dataUrl, prompt, negative });
-            saveDraft(galleryMember, prompt, negative);
-            renderGallery();
-            syncTargetUI();
-            refreshRosterUI();
-            status.text('生成完毕 ✓');
-            openLightbox(galleryMember, entry.id);
-        } catch (err) {
-            console.error('[玄枢] 立绘生成失败', err);
-            status.text('生成失败：' + (err?.message ?? err));
-            toastr.error('立绘生成失败：' + (err?.message ?? err));
-        }
-    });
+    $('#xuanshu-gal-import-btn').on('click', () => $('#xuanshu-gal-upload').trigger('click'));
     $('#xuanshu-gal-upload').on('change', async function () {
         if (!galleryMember) return;
         const files = [...(this.files ?? [])];
@@ -1334,6 +1720,107 @@ function bindEvents() {
         syncTargetUI();
         refreshRosterUI();
     });
+    $('#xuanshu-gal-gen-open').on('click', () => openGenerator(galleryMember));
+    $('#xuanshu-gal-filter-emotion').on('change', function () {
+        galleryFilterEmotion = this.value;
+        renderGallery();
+    });
+    $('#xuanshu-gal-filter-nsfw').on('change', function () {
+        galleryFilterNsfw = this.value;
+        renderGallery();
+    });
+    $('#xuanshu-gal-batch-del').on('click', () => startBatch('delete'));
+    $('#xuanshu-gal-batch-export').on('click', () => startBatch('export'));
+    $('#xuanshu-gal-batch-all').on('click', () => {
+        for (const img of getGallery(galleryMember ?? '')) galleryBatchSet.add(img.id);
+        renderGallery();
+    });
+    $('#xuanshu-gal-batch-clear').on('click', () => {
+        galleryBatchSet.clear();
+        renderGallery();
+    });
+    $('#xuanshu-gal-batch-exec').on('click', () => execBatch());
+    $('#xuanshu-gal-batch-cancel').on('click', () => {
+        galleryBatchMode = null;
+        galleryBatchSet.clear();
+        renderGallery();
+    });
+    // 生成表单
+    $root.find('.xuanshu-generator-close').on('click', () => {
+        $('#xuanshu-generator').hide();
+        $('#xuanshu-gallery').show();
+        renderGallery();
+    });
+    $('#xuanshu-gen-presets button').on('click', function () {
+        genState.preset = this.dataset.preset;
+        renderGeneratorPresets();
+        refreshGenPrompt();
+    });
+    $('#xuanshu-gen-themes button').on('click', function () {
+        genState.theme = this.dataset.theme;
+        renderGeneratorPresets();
+        refreshGenPrompt();
+    });
+    $('#xuanshu-gen-sizes button').on('click', function () {
+        genState.size = this.dataset.size;
+        renderGeneratorPresets();
+    });
+    $('#xuanshu-gen-extra').on('input', () => refreshGenPrompt());
+    $('#xuanshu-gen-tag-edit').on('click', () => {
+        const holder = document.getElementById('xuanshu-gen-tags');
+        if (holder) holder.style.display = holder.style.display === 'none' ? '' : 'none';
+    });
+    $('#xuanshu-gen-tags').on('input', function (e) {
+        const key = String(e.target?.id ?? '').replace('xuanshu-gen-ap-', '');
+        const member = getMember(galleryMember ?? '');
+        if (member && key && member.appearance) {
+            member.appearance[key] = String(e.target.value ?? '').trim();
+            refreshGenPrompt();
+        }
+    });
+    $('#xuanshu-gen-start').on('click', async () => {
+        collectGenTags();
+        save();
+        refreshGenPrompt();
+        await runGen();
+    });
+    $('#xuanshu-gen-regen').on('click', () => runGen());
+    $('#xuanshu-gen-save-pref').on('click', () => {
+        settings.genPref = Object.assign({}, genState, { extraPrompt: String(document.getElementById('xuanshu-gen-extra')?.value ?? '').trim() });
+        save();
+        toastr.success('已保存为生图偏好');
+    });
+    $('#xuanshu-gen-cancel').on('click', () => {
+        $('#xuanshu-generator').hide();
+        $('#xuanshu-gallery').show();
+        renderGallery();
+    });
+    // 标签编辑
+    $root.find('.xuanshu-tag-edit-close').on('click', () => {
+        $('#xuanshu-tag-edit').hide();
+        $('#xuanshu-gallery').show();
+        renderGallery();
+    });
+    $('#xuanshu-tag-save').on('click', () => {
+        if (!tagEditId) return;
+        const emo = document.getElementById('xuanshu-tag-emotion');
+        const nsfw = document.getElementById('xuanshu-tag-nsfw');
+        const tp = document.getElementById('xuanshu-tag-prompt');
+        updateGalleryImage(galleryMember, tagEditId, {
+            emotion: String(emo?.value ?? '').trim(),
+            nsfw: nsfw?.value === 'nsfw' ? true : nsfw?.value === 'daily' ? false : undefined,
+            prompt: String(tp?.value ?? '').trim(),
+        });
+        toastr.success('标签已保存');
+        $('#xuanshu-tag-edit').hide();
+        $('#xuanshu-gallery').show();
+        renderGallery();
+    });
+    $('#xuanshu-tag-cancel').on('click', () => {
+        $('#xuanshu-tag-edit').hide();
+        $('#xuanshu-gallery').show();
+        renderGallery();
+    });
     // 灯箱
     $('#xuanshu-lightbox').on('click', '.xuanshu-lb-prev', () => flipLightbox(-1));
     $('#xuanshu-lightbox').on('click', '.xuanshu-lb-next', () => flipLightbox(1));
@@ -1347,14 +1834,23 @@ function bindEvents() {
         syncTargetUI();
         refreshRosterUI();
     });
+    $('#xuanshu-lightbox').on('click', '.xuanshu-lb-regen', () => {
+        if (!lbState) return;
+        const cur = lbState.entries[lbState.index];
+        const name = lbState.name;
+        closeLightbox();
+        openGenerator(name);
+        $('#xuanshu-gen-prompt').val(cur.prompt ?? '');
+        $('#xuanshu-gen-neg').val(cur.negative ?? fixedNegative());
+        $('#xuanshu-gen-status').text('已载入该图生图内容——修改后点「重新生图」');
+    });
     $('#xuanshu-lightbox').on('click', '.xuanshu-lb-edit', () => {
         if (!lbState) return;
         const cur = lbState.entries[lbState.index];
+        const name = lbState.name;
         closeLightbox();
-        if (!galleryMember) openGallery(lbState.name);
-        $('#xuanshu-gal-prompt').val(cur.prompt ?? '');
-        $('#xuanshu-gal-neg').val(cur.negative ?? '');
-        $('#xuanshu-gal-status').text('已载入该图提示词——修改后点「生成立绘」生成新图');
+        openGallery(name);
+        openTagEdit(cur.id);
     });
     $('#xuanshu-lightbox').on('click', '.xuanshu-lb-del', async () => {
         if (!lbState) return;
@@ -1451,7 +1947,6 @@ function fillSettingsPanel() {
     const L = settings.comfy.layers ?? {};
     setVal('xuanshu-set-l-composition', L.composition);
     setVal('xuanshu-set-l-expression', L.expression);
-    setVal('xuanshu-set-l-appearance', L.appearanceDefault);
     setVal('xuanshu-set-l-outfit', L.outfit);
     setVal('xuanshu-set-l-pose', L.pose);
     setVal('xuanshu-set-l-lighting', L.lighting);
@@ -1493,7 +1988,6 @@ function applySettingsFromPanel() {
     settings.comfy.seed = Number.isFinite(cseed) ? cseed : -1;
     settings.comfy.layers.composition = getVal('xuanshu-set-l-composition');
     settings.comfy.layers.expression = getVal('xuanshu-set-l-expression');
-    settings.comfy.layers.appearanceDefault = getVal('xuanshu-set-l-appearance');
     settings.comfy.layers.outfit = getVal('xuanshu-set-l-outfit');
     settings.comfy.layers.pose = getVal('xuanshu-set-l-pose');
     settings.comfy.layers.lighting = getVal('xuanshu-set-l-lighting');

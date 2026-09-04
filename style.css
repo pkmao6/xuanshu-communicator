@@ -661,6 +661,123 @@
 .xuanshu-lb-actions button:hover { background: rgba(74, 246, 38, 0.2); }
 .xuanshu-lb-star.on { color: #ffd166; border-color: #ffd166; }
 
+
+/* ---- v1.4：图库面板整体（照搬色色灵感） ---- */
+.xuanshu-gal-btn {
+    border: 1px solid rgba(74, 246, 38, 0.4);
+    background: transparent;
+    color: #9dff8a;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 3px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+.xuanshu-gal-btn:hover { background: rgba(74, 246, 38, 0.15); }
+.xuanshu-gal-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.xuanshu-gal-primary {
+    background: rgba(74, 246, 38, 0.16);
+    border-color: #4af626;
+    color: #4af626;
+    font-weight: bold;
+    text-shadow: 0 0 5px rgba(74, 246, 38, 0.7);
+}
+.xuanshu-gal-danger { color: #ff8fa5; border-color: rgba(255, 77, 109, 0.4); }
+.xuanshu-gal-hint { color: #2f7a22; font-size: 10px; margin-top: 2px; }
+.xuanshu-gal-random-banner {
+    color: #ffd166;
+    font-size: 11px;
+    text-shadow: 0 0 5px rgba(255, 209, 102, 0.6);
+    min-height: 16px;
+}
+.xuanshu-gal-filters {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    font-size: 11px;
+    color: #9dff8a;
+}
+.xuanshu-gal-filters select {
+    background: rgba(74, 246, 38, 0.06);
+    border: 1px solid rgba(74, 246, 38, 0.3);
+    border-radius: 4px;
+    color: #4af626;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 2px 4px;
+    outline: none;
+    margin-left: 4px;
+}
+.xuanshu-gal-filters option { background: #020a02; color: #4af626; }
+.xuanshu-gal-item.in-random { box-shadow: 0 0 8px rgba(255, 209, 102, 0.45); }
+.xuanshu-gal-item.batch-selected { outline: 2px solid #ffd166; outline-offset: -2px; }
+.xuanshu-gal-check {
+    position: absolute;
+    left: 4px;
+    top: 4px;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    background: rgba(255, 209, 102, 0.9);
+    color: #1a1400;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.xuanshu-gal-meta {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    bottom: 4px;
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.xuanshu-gal-tag {
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.55);
+}
+.xuanshu-gal-tag-emotion { color: #ffd166; }
+.xuanshu-gal-tag-muted { color: #8a9a8a; }
+.xuanshu-gal-tag-nsfw { color: #ff8ac2; }
+.xuanshu-gal-tag-daily { color: #8ad4ff; }
+.xuanshu-gal-date { color: #9dff8a; font-size: 9px; margin-left: auto; }
+.xuanshu-gal-batch-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed rgba(74, 246, 38, 0.35);
+    font-size: 11px;
+    color: #ffd166;
+}
+/* 生成表单 */
+.xuanshu-gen-preset-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.xuanshu-gen-preset-row button {
+    border: 1px solid rgba(74, 246, 38, 0.4);
+    background: transparent;
+    color: #57c93e;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 3px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+.xuanshu-gen-preset-row button.active {
+    background: #4af626;
+    color: #0a140a;
+    font-weight: bold;
+    text-shadow: none;
+    box-shadow: 0 0 8px rgba(74, 246, 38, 0.7);
+}
+.xuanshu-gen-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+#xuanshu-gen-tags { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+
 /* ---- 动画 ---- */
 @keyframes xuanshu-blink {
     0%, 55% { opacity: 1; }
