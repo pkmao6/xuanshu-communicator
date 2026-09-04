@@ -1195,6 +1195,7 @@ function openProfileEditor(name) {
     ed.append($(html));
     ed.append($(`<div class="xuanshu-set-title">▍世界书条目关联（自动命中的会列出；没关联上的可下拉手动添加）</div>
         <div class="xuanshu-set-row"><select id="xuanshu-pe-wi-select"></select><button id="xuanshu-pe-wi-add" class="xuanshu-gal-btn">添加关联</button></div>
+        <div id="xuanshu-pe-wi-count"></div>
         <div id="xuanshu-pe-wi-list"></div>`));
     const ta = document.getElementById('xuanshu-pe-profile');
     if (ta) ta.value = member.profile ?? '';
@@ -1225,22 +1226,29 @@ function renderWorldLinksUI(name) {
     const manualIds = new Set((member.worldLinks || []).map((l) => l.id));
     const blockedIds = new Set((member.worldBlocked || []).map(String));
     const autoIds = new Set(st.auto.map((e) => worldbookIdOf(e)));
-    // 下拉：全部条目中「未关联 + 未屏蔽 + 非 TavernDB」
+    // 下拉：除「已手动关联」与 TavernDB 外的全部条目都可选（自动命中的也可选来"钉住"）
     const sel = document.getElementById('xuanshu-pe-wi-select');
+    const countBox = document.getElementById('xuanshu-pe-wi-count');
+    const countNote = document.createElement('div');
+    countNote.className = 'xuanshu-set-note';
     if (sel) {
         sel.innerHTML = '';
         const opts = st.all.filter((e) => {
             const id = worldbookIdOf(e);
             if (worldbookEntryStrings(e).some((s) => s.startsWith('TavernDB'))) return false;
-            if (manualIds.has(id) || blockedIds.has(id) || autoIds.has(id)) return false;
-            return true;
+            return !manualIds.has(id);
         });
-        if (!opts.length) {
-            sel.append(makeOption('（没有更多可关联条目）', ''));
+        countNote.textContent = '世界书共读取 ' + st.all.length + ' 条｜已关联 ' + (autoIds.size + manualIds.size) + ' 条';
+        if (!st.all.length) {
+            sel.append(makeOption('（当前世界书为空）', ''));
+            countNote.textContent = '未能从世界书读取到任何条目（共 0 条）——请确认当前聊天已挂载世界书；角色档案在哪个世界书/角色卡里，就把那个挂到当前聊天后再刷新。';
+        } else if (!opts.length) {
+            sel.append(makeOption('（所有条目都已手动关联）', ''));
         } else {
             for (const e of opts) {
                 const preview = String(e.content ?? '').replace(/\s+/g, ' ').slice(0, 22);
-                sel.append(makeOption(worldbookDisplayName(e) + (preview ? '　｜' + preview : ''), worldbookIdOf(e)));
+                const tag = autoIds.has(worldbookIdOf(e)) ? '（已自动命中，可选来钉住）' : '';
+                sel.append(makeOption(worldbookDisplayName(e) + tag + (preview ? '　｜' + preview : ''), worldbookIdOf(e)));
             }
         }
     }
@@ -1253,6 +1261,7 @@ function renderWorldLinksUI(name) {
         const id = worldbookIdOf(e);
         if (!rows.some((r) => r.id === id)) rows.push({ id, name: worldbookDisplayName(e), src: '手动', entry: e });
     }
+    if (countBox) { countBox.innerHTML = ''; countBox.appendChild(countNote); }
     if (!rows.length) {
         const empty = document.createElement('div');
         empty.className = 'xuanshu-set-note';
