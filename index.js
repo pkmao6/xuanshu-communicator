@@ -7,7 +7,7 @@ import { findChar } from '../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 
 const EXT_ID = 'xuanshu';
-const VERSION = '1.6.1';
+const VERSION = '1.6.2';
 
 const DEFAULT_WORKFLOW = JSON.stringify({
     '3': { class_type: 'KSampler', inputs: { seed: '{{seed}}', steps: 25, cfg: 6.5, sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] } },
@@ -2249,6 +2249,7 @@ function ensureUI() {
     const html = `
     <div id="xuanshu-launcher" class="xuanshu-launcher" title="玄枢通讯器">
       <span class="xuanshu-launcher-icon">◎</span>
+      <span class="xuanshu-launcher-label">玄枢</span>
       <span id="xuanshu-launcher-badge" class="xuanshu-launcher-badge" style="display:none"></span>
     </div>
     <div id="xuanshu-root" class="xuanshu-root" style="display:none">
@@ -2455,6 +2456,7 @@ function syncTitles() {
     if (!$root) return;
     $root.find('.xuanshu-title').text(settings.deviceName);
     $('#xuanshu-launcher').attr('title', settings.deviceName + '通讯器');
+    $('.xuanshu-launcher-label').text(settings.deviceName);
 }
 
 function refreshChatStyle() {
@@ -2485,9 +2487,15 @@ function refreshChatStyle() {
 `;
 }
 
+function isNarrowViewport() {
+    if (window.matchMedia && window.matchMedia('(max-width: 560px)').matches) return true;
+    if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches && window.innerWidth <= 980) return true;
+    return window.innerWidth <= 560;
+}
+
 function clampPosition() {
     if (!$root) return;
-    if (window.innerWidth <= 560) {
+    if (isNarrowViewport()) {
         // 手机端：清掉桌面端遗留的 inline left/top，交给 CSS 右下吸边 + 安全区定位
         const st = $root[0].style;
         if (st.left || st.top || st.right || st.bottom) {
@@ -2912,7 +2920,7 @@ function makeDraggable() {
         const up = () => {
             document.removeEventListener('pointermove', move);
             document.removeEventListener('pointerup', up);
-            if (window.innerWidth <= 560) {
+            if (isNarrowViewport()) {
                 // 手机端松手后回到 CSS 右下吸边定位
                 const st = $root[0].style;
                 st.left = st.top = st.right = st.bottom = '';
@@ -3086,10 +3094,10 @@ function setupViewportGuard() {
 
 function init() {
     ensureUI();
-    if (window.innerWidth <= 560 && settings.ui.open && $root) {
+    if (isNarrowViewport() && settings.ui.open && $root) {
         // 手机端初始状态只显示悬浮球，不遮挡酒馆主界面
         $root.hide();
-        $('#xuanshu-launcher').show();
+        $('#xuanshu-launcher').css('display', '').show();
     }
     refreshChatStyle();
     setupHeartbeat();
