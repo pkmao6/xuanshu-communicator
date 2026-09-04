@@ -7,7 +7,7 @@ import { findChar } from '../../../utils.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 
 const EXT_ID = 'xuanshu';
-const VERSION = '1.6.0';
+const VERSION = '1.6.1';
 
 const DEFAULT_WORKFLOW = JSON.stringify({
     '3': { class_type: 'KSampler', inputs: { seed: '{{seed}}', steps: 25, cfg: 6.5, sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] } },
@@ -3086,6 +3086,11 @@ function setupViewportGuard() {
 
 function init() {
     ensureUI();
+    if (window.innerWidth <= 560 && settings.ui.open && $root) {
+        // 手机端初始状态只显示悬浮球，不遮挡酒馆主界面
+        $root.hide();
+        $('#xuanshu-launcher').show();
+    }
     refreshChatStyle();
     setupHeartbeat();
     setupViewportGuard();
